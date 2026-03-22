@@ -651,7 +651,7 @@ MODELS: Dict[str, dict] = {
         "provider":"gemini","model_id":"gemini-2.5-flash-lite",
         "cost_in":0.10,"cost_out":0.40,"label":"Gemini 2.5 Flash-Lite (cheapest, fast)"},
     "gemini/gemini-2.5-flash": {
-        "provider":"gemini","model_id":"gemini-2.5-flash-latest",
+        "provider":"gemini","model_id":"gemini-2.5-flash",
         "cost_in":0.15,"cost_out":0.60,"label":"Gemini 2.5 Flash"},
     "gemini/gemini-2.0-flash": {
         "provider":"gemini","model_id":"gemini-2.0-flash",
