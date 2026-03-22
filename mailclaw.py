@@ -3076,7 +3076,7 @@ def _period_conversation_note(
 
     if start_date == this_week_start and end_date == this_week_end:
         chunks.append(
-            f"\n\n📆 I’m showing this week ({start_date} → {end_date}). "
+            f"\n\n📆 I'm showing this week ({start_date} → {end_date}). "
             f"Want last week ({last_week_start.isoformat()} → {last_week_end.isoformat()}) "
             f"or month-to-date? Say “last week”, “this month”, or a custom range in your next message."
         )
@@ -3085,18 +3085,18 @@ def _period_conversation_note(
         and end_date == last_week_end.isoformat()
     ):
         chunks.append(
-            f"\n\n📆 I’m showing last week ({start_date} → {end_date}). "
+            f"\n\n📆 I'm showing last week ({start_date} → {end_date}). "
             f"Want this week ({this_week_start} → {this_week_end}) or a different window? Say so next message."
         )
     elif date_defaulted_this_month:
         chunks.append(
-            f"\n\n📅 I’m showing this month to date ({start_date} → {end_date}) — you didn’t specify dates. "
+            f"\n\n📅 I'm showing this month to date ({start_date} → {end_date}) — you didn't specify dates. "
             f"Reply with “this week”, “last week”, “last month”, or “all time” to switch the window."
         )
         if t.day <= 7:
             prev_end = t.replace(day=1) - timedelta(days=1)
             chunks.append(
-                f" It’s early {t.strftime('%B')}; for a full prior month, ask for last month or {prev_end.strftime('%B')}."
+                f" It's early {t.strftime('%B')}; for a full prior month, ask for last month or {prev_end.strftime('%B')}."
             )
     elif (
         start_date == mo_start
@@ -3105,7 +3105,7 @@ def _period_conversation_note(
         and ("this month" in q or "month to date" in q or "mtd" in q)
     ):
         chunks.append(
-            f"\n\n📅 I’m showing this calendar month ({start_date} → {end_date}). "
+            f"\n\n📅 I'm showing this calendar month ({start_date} → {end_date}). "
             f"Want last month or this week only? Say it in your next message."
         )
 
