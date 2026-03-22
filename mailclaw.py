@@ -2756,17 +2756,49 @@ def cmd_ask(args):
 
 
 def cmd_bot(_args):
+    # Bind HTTP first: Railway healthchecks /health immediately; Telegram imports + Application.build()
+    # can take several seconds on a cold container.
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    _bot_started = {"ok": False}
+    class _Health(BaseHTTPRequestHandler):
+        def do_GET(self):
+            p = (self.path or "").split("?")[0].rstrip("/") or "/"
+            if p in ("/health", "/", "/ping"):
+                body = json.dumps(
+                    {"status": "ok", "bot": ("running" if _bot_started["ok"] else "starting")}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+        def log_message(self, *a):
+            pass
+    _hport = int(os.environ.get("PORT", "8080"))
+    _hs = HTTPServer(("0.0.0.0", _hport), _Health)
+    threading.Thread(target=_hs.serve_forever, daemon=True, name="health").start()
+    log.debug("Health check server on port %d", _hport)
+
     try:
         from telegram import Update
-        from telegram.ext import Application,CommandHandler,MessageHandler,filters
+        from telegram.ext import Application, CommandHandler, MessageHandler, filters
     except ImportError:
         console.print("[red]pip install python-telegram-bot[/]"); sys.exit(1)
-    c=cfg_load()
+    c = cfg_load()
     if not c.get("telegram_token"):
-        t=os.environ.get("TELEGRAM_TOKEN","") or os.environ.get("TELEGRAM_BOT_TOKEN","")
-        if t: c["telegram_token"]=t
-    if not c.get("telegram_token"): console.print("[red]No token. Set TELEGRAM_TOKEN env var.[/]"); sys.exit(1)
-    # No user restrictions — anyone who knows the bot can use it
+        t = os.environ.get("TELEGRAM_TOKEN", "") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if t:
+            c["telegram_token"] = t
+    if not c.get("telegram_token"):
+        console.print("[red]No token. Set TELEGRAM_TOKEN env var.[/]")
+        sys.exit(1)
+
+    def ok_fn(uid: int) -> bool:
+        allowed = c.get("telegram_allowed_users") or []
+        return (not allowed) or (uid in allowed)
 
     import random as _random
 
@@ -3063,29 +3095,9 @@ def cmd_bot(_args):
     app.add_handler(MessageHandler(filters.COMMAND, unknown_cmd))
     # Plain text: greetings → snarky, anything else → AI ask
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_text))
-    # ── Health check server (Railway / uptime monitors) ─────────────────────
-    # Runs on PORT env var (Railway sets this) or 8080 as fallback.
-    # GET /health → 200 {"status":"ok","bot":"running"}
-    import threading
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    _bot_started={"ok":False}
-    class _Health(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path in ("/health","/","/ping"):
-                body=json.dumps({"status":"ok","bot":("running" if _bot_started["ok"] else "starting")}).encode()
-                self.send_response(200); self.send_header("Content-Type","application/json")
-                self.send_header("Content-Length",str(len(body))); self.end_headers()
-                self.wfile.write(body)
-            else:
-                self.send_response(404); self.end_headers()
-        def log_message(self,*a): pass  # silence access logs
-    _hport=int(os.environ.get("PORT","8080"))
-    _hs=HTTPServer(("0.0.0.0",_hport),_Health)
-    threading.Thread(target=_hs.serve_forever,daemon=True).start()
-    log.debug("Health check server on port %d",_hport)
 
     console.print(Panel(f"[bold green]Mailclaw Bot running[/] — health: :{_hport}/health",border_style="green"))
-    _bot_started["ok"]=True
+    _bot_started["ok"] = True
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
