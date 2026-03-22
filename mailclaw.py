@@ -3515,6 +3515,96 @@ def _lead_ts_date(lead: dict) -> Optional[date]:
         return None
 
 
+def _expand_ask_campaign_index_tokens(raw: str) -> Set[int]:
+    """Parse '1, 2 3' or '1-3' into a set of positive indices."""
+    out: Set[int] = set()
+    for part in re.split(r"[\s,]+", (raw or "").strip()):
+        if not part:
+            continue
+        if re.fullmatch(r"\d+-\d+", part):
+            a, b = part.split("-", 1)
+            ia, ib = int(a), int(b)
+            if ia <= ib:
+                for i in range(ia, ib + 1):
+                    out.add(i)
+            else:
+                for i in range(ib, ia + 1):
+                    out.add(i)
+        elif part.isdigit():
+            out.add(int(part))
+    return out
+
+
+def _ask_parse_campaign_index_spec(
+    question: str,
+) -> Tuple[str, Optional[Literal["include", "exclude"]], Optional[Set[int]]]:
+    """
+    Strip optional campaign index lines from the question (same numbering as /analytics tables).
+
+    Include only:  campaigns: 1 2 3  |  campaigns: 1,2,3  |  only: 1-3
+    Exclude:       exclude: 2,4  |  except: 1
+    """
+    q = question.strip()
+    # Prefer explicit include over exclude if both appear (first match wins: scan include first)
+    for rx, mode in (
+        (
+            re.compile(
+                r"(?is)(?:^|[\s.,;!])(?:campaigns?|only)\s*:\s*([\d\s,\-]+)(?=[\s.,;!]|$)"
+            ),
+            "include",
+        ),
+        (
+            re.compile(
+                r"(?is)(?:^|[\s.,;!])(?:exclude|except)\s*:\s*([\d\s,\-]+)(?=[\s.,;!]|$)"
+            ),
+            "exclude",
+        ),
+    ):
+        m = rx.search(q)
+        if not m:
+            continue
+        idxs = _expand_ask_campaign_index_tokens(m.group(1))
+        if not idxs:
+            continue
+        q2 = (q[: m.start()] + q[m.end() :]).strip()
+        q2 = re.sub(r"\s+", " ", q2)
+        return q2, mode, idxs
+    return question, None, None
+
+
+def _ask_apply_campaign_indices_named(
+    ordered_ids: List[str],
+    smap: Dict[str, dict],
+    mode: str,
+    indices: Set[int],
+) -> Tuple[Optional[List[str]], Optional[str]]:
+    """Like _ask_apply_campaign_indices but error text lists campaign names."""
+    n = len(ordered_ids)
+    if n == 0:
+        return None, "No campaigns with activity in this period — nothing to filter."
+    bad = sorted({i for i in indices if i < 1 or i > n})
+    if bad:
+        lines = [
+            f"  {i}. {(smap.get(ordered_ids[i - 1]) or {}).get('name', '?')[:70]}"
+            for i in range(1, min(n, 18) + 1)
+        ]
+        tail = f"\n  … ({n} total)" if n > 18 else ""
+        return None, (
+            f"❌ Campaign index {bad[0]} is invalid (use 1–{n}). "
+            f"Active campaigns in numbered order:\n"
+            + "\n".join(lines)
+            + tail
+        )
+    if mode == "include":
+        want = {ordered_ids[i - 1] for i in indices}
+        return [cid for cid in ordered_ids if cid in want], None
+    drop = {ordered_ids[i - 1] for i in indices}
+    keep = [cid for cid in ordered_ids if cid not in drop]
+    if not keep:
+        return None, "❌ exclude: would remove every campaign — pick different numbers."
+    return keep, None
+
+
 def _ask_pick_campaign_ids(question: str, camps: List[dict]) -> Optional[Set[str]]:
     """
     If the question names one campaign, return its id(s). Substring match on name.
@@ -3620,21 +3710,24 @@ def analytics_ask(
     if not cfg_meta:
         return (f"❌ Instantly client '{client_name}' not found. Add INSTANTLY_CLIENT_<NAME> in env or config.", [])
 
+    # Strip optional `campaigns:` / `exclude:` before dates & intents (indices applied after we know active set)
+    q_work, cmp_mode, cmp_idx = _ask_parse_campaign_index_spec(question)
+
     # Parse date range: deterministic phrases first, then Gemini JSON
-    s_fb, e_fb = _parse_dates_fallback(question)
+    s_fb, e_fb = _parse_dates_fallback(q_work)
     if s_fb or e_fb:
         start_date, end_date = s_fb, e_fb
     else:
-        start_date, end_date = _parse_dates(question, client_slug=client_slug)
+        start_date, end_date = _parse_dates(q_work, client_slug=client_slug)
 
     date_defaulted_this_month = False
-    if not (start_date or end_date) and not _wants_all_time(question):
+    if not (start_date or end_date) and not _wants_all_time(q_work):
         t0 = date.today()
         start_date = t0.replace(day=1).isoformat()
         end_date = t0.isoformat()
         date_defaulted_this_month = True
 
-    if not (start_date or end_date) and _wants_all_time(question):
+    if not (start_date or end_date) and _wants_all_time(q_work):
         dr_label = "all time"
     elif date_defaulted_this_month:
         dr_label = f"this month ({start_date} → {end_date}, default)"
@@ -3642,8 +3735,8 @@ def analytics_ask(
         dr_label = f"{start_date} → {end_date}"
     else:
         dr_label = "all time"
-    lead_intent = _ask_lead_list_intent(question)
-    export_kind = _ask_export_intent(question)
+    lead_intent = _ask_lead_list_intent(q_work)
+    export_kind = _ask_export_intent(q_work)
     if force_export == "csv":
         export_kind = "full_csv"
     elif force_export == "xlsx":
@@ -3651,11 +3744,13 @@ def analytics_ask(
     elif force_export == "both":
         export_kind = "full_both"
     if export_kind == "leads_csv" and not lead_intent:
-        qlx = question.lower()
+        qlx = q_work.lower()
         if "meeting" in qlx:
             lead_intent = {"statuses": [2], "label": "meeting booked"}
         elif any(k in qlx for k in ("lead", "opportunity", "pipeline", "crm")):
             lead_intent = {"statuses": [1, 2, 3, 4], "label": "positive-status leads"}
+
+    question = q_work.strip() or "Summarize metrics for the selected campaigns."
 
     try:
         inst=Instantly(cfg_meta["key"], cfg_meta.get("name",""), c.get("rate_limit_delay", 0.12))
@@ -3675,8 +3770,28 @@ def analytics_ask(
             ov_=inst.get_analytics_overview([cid],start_date,end_date)
             if ov_ and (ov_.get("emails_sent_count",0) or 0)>0:
                 sel.append(cid); smap[cid]=camp
+
+        # Optional campaign picker: same 1-based order as /analytics (newest updated first among active sends)
+        ordered_sel = sorted(
+            sel,
+            key=lambda cid: smap[cid].get("timestamp_updated", "") or "",
+            reverse=True,
+        )
+        if cmp_mode and cmp_idx:
+            sel2, cerr = _ask_apply_campaign_indices_named(ordered_sel, smap, cmp_mode, cmp_idx)
+            if cerr:
+                return (cerr, [])
+            sel = sel2
+            smap = {cid: smap[cid] for cid in sel}
+
         if not sel and not lead_intent:
             return (f"No campaign activity found for period: {dr_label}", [])
+        if not sel:
+            return (
+                "❌ No campaigns left after your campaign filter. "
+                "Check `campaigns:` / `exclude:` indices — run /analytics <profile> for the numbered list.",
+                [],
+            )
 
         # Build compact metrics per campaign
         rows=[]
@@ -3786,7 +3901,7 @@ def analytics_ask(
             max_exp=min(max(max_exp,200),5000)
             raw_leads=inst.list_positive_leads(max_expected=max_exp)
             st_set=set(lead_intent["statuses"])
-            allowed=set(camp_by_id.keys())
+            allowed=set(sel)
             pick=_ask_pick_campaign_ids(question,camps)
             if pick:
                 allowed&=pick
@@ -3905,12 +4020,16 @@ def analytics_ask(
 def cmd_ask(args):
     """CLI handler: mailclaw ask 'how many meetings did we book last week?'"""
     q=" ".join(args.question) if args.question else ""
+    camp_arg = getattr(args, "campaigns", None)
+    if camp_arg:
+        q = f"{q} campaigns: {camp_arg}".strip()
     if not q:
         console.print("[bold]Usage:[/] mailclaw ask [yellow]'your question'[/]")
         console.print("[dim]  mailclaw ask 'how many emails did I send yesterday?'[/]")
         console.print("[dim]  mailclaw ask 'what was our reply rate last week?'[/]")
         console.print("[dim]  mailclaw ask 'how many meetings did we book this month?'[/]")
         console.print("[dim]  mailclaw ask --profile will 'show me this week stats'[/]")
+        console.print("[dim]  mailclaw ask --campaigns '1,3' 'reply rate last week'   # same as campaigns: 1,3 in the question[/]")
         console.print("[dim]  mailclaw ask --export csv 'reply rate last week'   # save full analytics CSV → ~/Downloads[/]")
         console.print("[dim]  mailclaw ask --export xlsx 'March summary'         # save Excel workbook[/]")
         console.print("[dim]  mailclaw ask 'export csv — meetings this week'    # or put csv/excel in the question[/]")
@@ -4148,6 +4267,10 @@ def cmd_bot(_args):
             "`/ask <profile> <question>` — that profile’s client + filters.",
             "_Or plain text_ — optional first word = profile name.",
             "",
+            "*Campaigns (optional):* add `campaigns: 1 2 3` or `only: 1-3` to limit to those rows; "
+            "or `exclude: 2` to drop numbers. Indices match `/analytics <profile>` (active campaigns "
+            "with sends in this period, *newest updated first*).",
+            "",
             "*Get files (CSV / Excel):* say *export csv*, *download excel*, or *full analytics spreadsheet*. "
             "Main client in examples below is *will* — use your profile name the same way.",
             "",
@@ -4173,6 +4296,7 @@ def cmd_bot(_args):
             "• `/ask will export csv — this week`\n"
             "• `/ask will export csv download excel last month` _(CSV + Excel if both keywords)_\n\n"
             "*Other asks:*\n"
+            "• `/ask will campaigns: 1 2 human reply rate last week` _(only campaigns #1 and #2 — same order as `/analytics will`)_\n"
             "• `/ask What was our human reply rate last week?`\n"
             "• `/ask acme How many meetings booked *this month*?`\n"
             "• `/ask Compare bounce rate March vs April — export csv`\n"
@@ -6491,6 +6615,13 @@ def main():
     aq=s.add_parser("ask", help='Ask AI a question: mailclaw ask "emails sent yesterday?"')
     aq.add_argument("question", nargs="*", help="Your question in plain English")
     aq.add_argument("--profile","-p", default=None, help="Analytics profile name")
+    aq.add_argument(
+        "--campaigns",
+        "-c",
+        default=None,
+        metavar="LIST",
+        help="1-based indices (comma, space, or ranges like 1-3), appended as campaigns: … — same numbering as mailclaw analytics",
+    )
     aq.add_argument(
         "--export",
         choices=["auto", "csv", "xlsx", "both"],
