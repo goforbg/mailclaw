@@ -6,12 +6,50 @@
 |_|  |_|\__,_|_||_||___/|_|\__,_| \_/\_/  
                                            
   cold email pipeline  •  analytics  •  v2.0
-  by InboxPirates Consulting × Tuco.ai
+  by inboxpiratesconsulting.com × Tuco.ai
 ```
 
-**Mailclaw** is a battle-tested cold email operations CLI. CSV in → verified, enriched, uploaded to Instantly in minutes. Full analytics reporting with cross-campaign deduplication. Telegram bot included.
+**Mailclaw** is an **operations stack for GTM and cold-email teams**: one CLI to take prospect lists from **raw CSV → verified → AI-enriched → live in Instantly**, then **measure what actually happened**—per campaign, per client, and portfolio-wide—without spreadsheet hell.
 
-Built by [InboxPirates Consulting](https://inboxpirates.com) — the agency behind some of the highest-performing cold email systems in B2B SaaS. Powered by [Tuco.ai](https://tuco.ai) — automate your iMessage outreach.
+**Who it’s for**
+
+- **Outbound & cold email agencies** running multiple Instantly workspaces: standardize how every client gets cleaned data, safe sends, and reporting that doesn’t double-count leads across campaigns.
+- **GTM / growth / RevOps** at SaaS and services companies: ship lists faster, keep deliverability honest (verification + key rotation), and answer *“what did we book, reply, and lose to bounce this week?”* on demand.
+- **Founders and reps** who want **Telegram** as a control room: natural-language analytics, CSV drops for verification, and campaign reports without logging into five tools.
+
+**What you get**
+
+- **Pipeline:** column mapping, Reoon verification with rotating keys, optional AI enrichment (Gemini / Claude / GPT), upload to **Instantly v2**.
+- **Truthful analytics:** date-ranged reports, cross-campaign deduplication, meetings / opportunities / reply metrics, Excel exports, and a **multi-client** model (separate keys per client on Railway or laptop).
+- **Always-on bot:** ask questions in plain English, get live numbers, attach exports—built for agencies that need speed and clarity across accounts.
+
+Built by **[InboxPirates Consulting](https://inboxpiratesconsulting.com)** — the agency behind some of the highest-performing cold email systems in B2B SaaS.  
+Powered by **[Tuco.ai](https://tuco.ai)** — automate your iMessage outreach.
+
+---
+
+```
+ █████╗  ██████╗ ███████╗███╗   ██╗ ██████╗ ██╗███████╗███████╗
+██╔══██╗██╔════╝ ██╔════╝████╗  ██║██╔═══██╗██║██╔════╝██╔════╝
+███████║██║  ███╗█████╗  ██╔██╗ ██║██║   ██║██║███████╗█████╗  
+██╔══██║██║   ██║██╔══╝  ██║╚██╗██║██║   ██║██║╚════██║██╔══╝  
+██║  ██║╚██████╔╝███████╗██║ ╚████║╚██████╔╝██║███████║███████╗
+╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚══════╝╚══════╝
+ ██╗   ██╗ ██████╗ ██╗   ██╗██████╗     █████╗  ██████╗ ███████╗███╗   ██╗ ██████╗██╗   ██╗
+ ██║   ██║██╔═══██╗██║   ██║██╔══██╗   ██╔══██╗██╔════╝ ██╔════╝████╗  ██║██╔════╝╚██╗ ██╔╝
+ ██║   ██║██║   ██║██║   ██║██████╔╝   ███████║██║  ███╗█████╗  ██╔██╗ ██║██║      ╚████╔╝ 
+ ╚██╗ ██╔╝██║   ██║██║   ██║██╔══██╗   ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║██║       ╚██╔╝  
+  ╚████╔╝ ╚██████╔╝╚██████╔╝██║  ██║   ██║  ██║╚██████╔╝███████╗██║ ╚████║╚██████╗   ██║   
+   ╚═══╝   ╚═════╝  ╚═════╝ ╚═╝  ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝   ╚═╝   
+```
+
+### **→ [BOOK A STRATEGY CALL — GET MAILCLAW BUILT FOR YOUR AGENCY](https://inboxpirates.com/demo)** ←
+
+**Agency teams:** if you want this pipeline, analytics stack, and Telegram ops **implemented end-to-end for your shop**, book here:
+
+# **[https://inboxpirates.com/demo](https://inboxpirates.com/demo)**
+
+Implementation • infra • multi-client keys • reporting — **[inboxpiratesconsulting.com](https://inboxpiratesconsulting.com)**
 
 ---
 
@@ -182,8 +220,8 @@ Copy `.env.example` for more options.
 ```
 /analytics          → list profiles
 /analytics will     → run report (live Instantly data)
-/balance            → Reoon credits
-/help               → commands
+/balance            → Reoon credits (live API sync; falls back if API unreachable)
+/help               → commands + /ask profile help
 
 Or just type any question:
   "how many meetings did we book this week?"
@@ -205,14 +243,45 @@ Drop a .csv → get back verified + filtered CSVs
 
 ---
 
+## Operations & reliability
+
+- **Logging:** configurable log level; failures in analytics, Telegram sends, CSV export, and Reoon sync are **`log.exception` / `log.warning`** so hosted deploys (e.g. Railway) can trace issues in process logs.
+- **Telegram `/balance`:** calls Reoon’s **live balance API** in a **background thread** so the bot event loop is not blocked; malformed API fields are handled safely with warnings in logs.
+- **Telegram sends:** reply helpers catch **`TelegramError`** and log instead of crashing the bot.
+- **CLI `mailclaw balance`:** same live Reoon sync as `/balance` (see above).
+
+---
+
 ## License
 
-Copyright © 2026 Crewcharge Technologies Private Limited / Foxwell & Pierce Group Inc.  
-All rights reserved. Not licensed for reuse without permission.
+**Proprietary — all rights reserved.** This repository is public **for reference only**.  
+**No use, copying, modification, distribution, or commercial use is permitted** without a **written commercial license** from the copyright holder.
+
+See [`LICENSE`](LICENSE) for full terms.
+
+Copyright © 2026 Crewcharge Technologies Private Limited and Foxwell & Pierce Group Inc.
 
 ---
 
 ## By
+
+```
+ ██████╗ ██╗   ██╗██╗██████╗ ██╗      █████╗ ██████╗ ██╗    ██╗ █████╗      ██████╗ ██╗██████╗ ██╗██╗  ██╗ █████╗ ██████╗ 
+ ██╔══██╗██║   ██║██║██╔══██╗██║     ██╔══██╗██╔══██╗██║    ██║██╔══██╗    ██╔════╝ ██║██╔══██╗██║██║  ██║██╔══██╗██╔══██╗
+ ██████╔╝██║   ██║██║██████╔╝██║     ███████║██████╔╝██║ █╗ ██║███████║    ██║  ███╗██║██████╔╝██║███████║███████║██████╔╝
+ ██╔══██╗██║   ██║██║██╔══██╗██║     ██╔══██║██╔══██╗██║███╗██║██╔══██║    ██║   ██║██║██╔══██╗██║██╔══██║██╔══██║██╔══██╗
+ ██████╔╝╚██████╔╝██║██║  ██║███████╗██║  ██║██║  ██║╚███╔███╔╝██║  ██║    ╚██████╔╝██║██║  ██║██║██║  ██║██║  ██║██║  ██║
+ ╚═════╝  ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝  ╚═╝     ╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
+```
+
+**Bharadwaj Giridhar** — founder / builder — **`@goforbg` everywhere**
+
+| Platform | **@goforbg** |
+|:---:|:---|
+| GitHub | **[github.com/goforbg](https://github.com/goforbg)** |
+| X (Twitter) | **[x.com/goforbg](https://x.com/goforbg)** |
+| LinkedIn | **[linkedin.com/in/goforbg](https://www.linkedin.com/in/goforbg/)** |
+| Instagram | **[instagram.com/goforbg](https://www.instagram.com/goforbg/)** |
 
 ```
   ___       _            ____  _           _            
@@ -221,7 +290,8 @@ All rights reserved. Not licensed for reuse without permission.
   | || | | | |_) | (_) |  __/| | | | (_| | ||  __/\__ \
  |___|_| |_|_.__/ \___/|_|   |_|_|  \__,_|\__\___||___/
                                                         
-  inboxpirates.com  •  Cold email that actually lands.
+  inboxpiratesconsulting.com  •  Cold email that actually lands.
+  BOOK THE PIPELINE FOR YOUR AGENCY → inboxpirates.com/demo
 ```
 
 ```
@@ -237,5 +307,8 @@ All rights reserved. Not licensed for reuse without permission.
 
 ---
 
-*Built with obsession by [@bharadwaj_g](https://twitter.com/bharadwaj_g)*  
-*Questions? DM on Telegram or open an issue.*
+**Mailclaw** • **[@goforbg](https://github.com/goforbg)** on GitHub · [X](https://x.com/goforbg) · [LinkedIn](https://www.linkedin.com/in/goforbg/) · [Instagram](https://www.instagram.com/goforbg/) — *Bharadwaj Giridhar*
+
+**Agency?** **[Book a call — inboxpirates.com/demo](https://inboxpirates.com/demo)** · **[inboxpiratesconsulting.com](https://inboxpiratesconsulting.com)**
+
+*Questions? Open an issue or DM on social above.*

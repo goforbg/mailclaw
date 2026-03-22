@@ -44,7 +44,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime, date
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Optional, List, Dict, Tuple, Any, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 
@@ -2916,8 +2916,178 @@ def run_onboarding():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ASK_MODEL    = "gemini/gemini-2.5-flash"
 ASK_SYSTEM   = """You are Mailclaw, a cold email analytics assistant for an agency.
-You answer questions about campaign performance using real data provided to you.
-Be concise, precise with numbers, and helpful. Format numbers with commas."""
+You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
+
+DEFINITIONS (rates use unique leads contacted = Email 1 / step 0 in the period, per campaign):
+- human_reply_rate: human_replies / leads (unique human replies ÷ unique leads contacted). In BY_CAMPAIGN as human_reply_rate (0–1) and human_reply_rate_pct.
+- total_reply_rate (incl. auto/OOO): (human_replies + auto_replies) / leads — fields total_reply_rate and total_reply_rate_pct.
+- bounce_rate: bounced / leads (bounced_count ÷ leads from overview). Portfolio row uses bounce_rate_portfolio_*.
+- unsub_rate: unsubscribed / leads.
+- BY_CAMPAIGN: one object per campaign with activity in the period; use is_subsequence to exclude subseqs from portfolio totals when comparing to METRICS_SUMMARY.
+- METRICS_SUMMARY / portfolio_*: sums across **primary** campaigns only (subsequences excluded).
+
+For “per campaign” questions, answer from each BY_CAMPAIGN row by name. For “overall” or “across campaigns” in the period, use portfolio_* and METRICS_SUMMARY.
+
+Bounce/unsub: per-campaign rates are in BY_CAMPAIGN (bounce_rate_pct, unsub_rate_pct). Overall period rates: bounce_rate_portfolio_pct / unsub_rate_portfolio_pct in TOTALS. Instantly does not expose a per-email bounce list in this dataset — give counts and rates, not invented email lists for bounces.
+
+Use METRICS_SUMMARY, BY_CAMPAIGN, and LEAD_ROWS when present. Do not claim “all time only” when Period is set."""
+
+ASK_SYSTEM_LEADS = """You are Mailclaw, a cold email analytics assistant for an agency.
+The data includes LEAD_ROWS: real Instantly CRM leads (email, status, campaign, last_updated).
+When the user asks for lists, emails, or names, answer from LEAD_ROWS only — never invent addresses.
+If the list is truncated, say how many rows were shown vs total matched.
+Date filters on lead rows use CRM last_updated (when status was last changed)."""
+
+
+def _ask_export_intent(question: str) -> str:
+    """'' | 'leads_csv' | 'full_csv' | 'full_xlsx' | 'full_both'"""
+    ql = question.lower()
+    if not any(k in ql for k in ("export", "download", "csv", "excel", "xlsx", "spreadsheet")):
+        return ""
+    csv_ = "csv" in ql
+    xlsx_ = "excel" in ql or "xlsx" in ql
+    narrow = any(k in ql for k in ("lead", "leads", "meeting", "meetings", "booked", "email"))
+    full_kw = any(k in ql for k in ("full report", "full analytics", "analytics report", "campaign report", "all sheet"))
+    if csv_ and xlsx_:
+        return "full_both"
+    if csv_ and narrow and not full_kw and "analytics" not in ql:
+        return "leads_csv"
+    if csv_:
+        return "full_csv"
+    if xlsx_ or "spreadsheet" in ql:
+        return "full_xlsx"
+    return ""
+
+
+def _leads_table_csv_bytes(rows: List[dict]) -> bytes:
+    """UTF-8 CSV; fieldnames = stable union of keys across rows (type-safe for export)."""
+    import csv as _csv
+    buf = io.StringIO()
+    if not rows:
+        w = _csv.writer(buf)
+        w.writerow(["email", "status", "campaign", "last_updated"])
+        w.writerow(["(no rows matched)", "", "", ""])
+    else:
+        seen: Set[str] = set()
+        fieldnames: List[str] = []
+        for row in rows:
+            for k in row.keys():
+                if k not in seen:
+                    seen.add(k)
+                    fieldnames.append(k)
+        w = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    return buf.getvalue().encode("utf-8")
+
+def _parse_dates_fallback(question: str) -> Tuple[str, str]:
+    """Deterministic date phrases so 'this week' is never mis-parsed as all-time."""
+    from datetime import date, timedelta
+    today = date.today()
+    wday = today.weekday()
+    q = question.lower()
+    if "yesterday" in q:
+        d = today - timedelta(days=1)
+        return d.isoformat(), d.isoformat()
+    if "today" in q and "yesterday" not in q:
+        return today.isoformat(), today.isoformat()
+    if "this week" in q or "this-week" in q:
+        return (today - timedelta(days=wday)).isoformat(), today.isoformat()
+    if "last week" in q:
+        start = today - timedelta(days=wday + 7)
+        end = today - timedelta(days=wday + 1)
+        return start.isoformat(), end.isoformat()
+    if "this month" in q:
+        return today.replace(day=1).isoformat(), today.isoformat()
+    if "last month" in q:
+        last_end = today.replace(day=1) - timedelta(days=1)
+        last_start = last_end.replace(day=1)
+        return last_start.isoformat(), last_end.isoformat()
+    return "", ""
+
+
+def _ask_lead_list_intent(question: str) -> Optional[dict]:
+    """
+    If the user wants actual lead rows (emails), return status filter for lt_interest_status.
+    1=Interested, 2=Meeting Booked, 3=Meeting Completed, 4=Won/Closed
+    """
+    ql = question.lower()
+    if re.search(r"\bwhat meetings\b", ql) and ("book" in ql or "booked" in ql):
+        return {"statuses": [2], "label": "meeting booked"}
+    if re.search(r"\bmeetings did (i|we) book\b", ql):
+        return {"statuses": [2], "label": "meeting booked"}
+    if re.search(r"\bleads did (i|we) book\b", ql) or "leads i booked" in ql:
+        return {"statuses": [2], "label": "meeting booked"}
+    if re.search(r"\bwho (are|is)\b.*\blead", ql) or re.search(r"\ball (the )?leads\b", ql):
+        return {"statuses": [1, 2, 3, 4], "label": "positive-status leads"}
+    listing = any(
+        x in ql for x in (
+            "list", " all ", " every ", "emails", " who", "who ",
+            "show me", "give me", "what are", "which ", "addresses",
+            "contacts", "names",
+        )
+    ) or re.search(r"\b(email|emails)\b", ql) or re.search(r"\ball\b", ql)
+    if not listing:
+        return None
+    if ("meeting" in ql or "meetings" in ql) and (
+        "book" in ql or "booked" in ql or "scheduled" in ql
+    ):
+        return {"statuses": [2], "label": "meeting booked"}
+    if ("won" in ql or "closed" in ql) and ("deal" in ql or "won" in ql):
+        return {"statuses": [4], "label": "won/closed"}
+    if "completed" in ql and "meeting" in ql:
+        return {"statuses": [3], "label": "meeting completed"}
+    if "interested" in ql and "positive" not in ql and "book" not in ql:
+        return {"statuses": [1], "label": "interested"}
+    if "positive" in ql or "opportunit" in ql:
+        return {"statuses": [1, 2, 3, 4], "label": "positive / opportunities"}
+    if "lead" in ql:
+        return {"statuses": [1, 2, 3, 4], "label": "positive-status leads"}
+    return None
+
+
+def _lead_ts_date(lead: dict) -> Optional[date]:
+    """Parse YYYY-MM-DD from Instantly lead timestamp fields."""
+    from datetime import datetime
+    raw = lead.get("timestamp_updated") or lead.get("timestamp_created") or ""
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _ask_pick_campaign_ids(question: str, camps: List[dict]) -> Optional[Set[str]]:
+    """
+    If the question names one campaign, return its id(s). Substring match on name.
+    None = use all campaigns.
+    """
+    ql = question.lower()
+    if "this campaign" in ql or "that campaign" in ql:
+        return None
+    best = None
+    best_len = 0
+    for c in camps:
+        name = (c.get("name") or "").strip()
+        if len(name) < 4:
+            continue
+        nl = name.lower()
+        if nl in ql and len(nl) > best_len:
+            best = {c["id"]}
+            best_len = len(nl)
+    # partial: longest campaign name contained in question
+    for c in camps:
+        name = (c.get("name") or "").strip()
+        if len(name) < 8:
+            continue
+        nl = name.lower()
+        chunk = nl[:40] if len(nl) > 40 else nl
+        if chunk in ql and len(chunk) > best_len:
+            best = {c["id"]}
+            best_len = len(chunk)
+    return best
+
 
 def _parse_dates(question: str, client_slug: Optional[str] = None) -> Tuple[str, str]:
     """Ask Gemini to extract start/end dates from a natural language question."""
@@ -2953,40 +3123,53 @@ def _parse_dates(question: str, client_slug: Optional[str] = None) -> Tuple[str,
         log.debug("_parse_dates failed: %s",e); return "",""
 
 
-def analytics_ask(question:str, profile_name:str=None)->str:
+def analytics_ask(question: str, profile_name: Optional[str] = None) -> Tuple[str, List[Tuple[str, bytes]]]:
     """
     Answer a natural language analytics question using live Instantly data + Gemini.
-    Works for both CLI and Telegram.
+    Returns (answer_text, [(filename, bytes), ...]) for optional CSV/Excel exports.
     """
     from datetime import date
     import json as _j
     c=cfg_load()
+    attachments: List[Tuple[str, bytes]] = []
 
     # Resolve profile
     all_p=analytics_profiles_all()
     if not all_p:
-        return "❌ No analytics profiles. Run: mailclaw analytics-profiles"
+        return ("❌ No analytics profiles. Run: mailclaw analytics-profiles", [])
     pname=profile_name or list(all_p.keys())[0]
     prof=all_p.get(pname)
     if not prof:
-        return f"❌ Profile '{pname}' not found. Available: {', '.join(all_p.keys())}"
+        return (f"❌ Profile '{pname}' not found. Available: {', '.join(all_p.keys())}", [])
 
     client_name=(prof.get("client_name") or (prof.get("client_names") or [""])[0])
     client_slug=(client_name or "").strip().lower() or None
     log.info("analytics_ask: profile=%r client_name=%r client_slug=%r", pname, client_name, client_slug)
 
     if not _provider_has_keys(c, "gemini", client_slug):
-        return ("❌ No Gemini API key for this profile. Set GEMINI_API_KEY (global) or "
+        return (("❌ No Gemini API key for this profile. Set GEMINI_API_KEY (global) or "
                 f"{(_client_env_prefix(client_name) + '_GEMINI_API_KEY') if client_name else 'CLIENT_GEMINI_API_KEY'} "
-                "for this Instantly client — see README / docs/CLIENT_ENV.md")
+                "for this Instantly client — see README / docs/CLIENT_ENV.md"), [])
 
     cfg_meta=get_instantly_client_entry(c, client_name)
     if not cfg_meta:
-        return f"❌ Instantly client '{client_name}' not found. Add INSTANTLY_CLIENT_<NAME> in env or config."
+        return (f"❌ Instantly client '{client_name}' not found. Add INSTANTLY_CLIENT_<NAME> in env or config.", [])
 
-    # Parse date range from question
-    start_date,end_date=_parse_dates(question, client_slug=client_slug)
-    dr_label=f"{start_date} → {end_date}" if (start_date or end_date) else "all time"
+    # Parse date range: deterministic phrases first, then Gemini JSON
+    s_fb, e_fb = _parse_dates_fallback(question)
+    if s_fb or e_fb:
+        start_date, end_date = s_fb, e_fb
+    else:
+        start_date, end_date = _parse_dates(question, client_slug=client_slug)
+    dr_label = f"{start_date} → {end_date}" if (start_date or end_date) else "all time"
+    lead_intent = _ask_lead_list_intent(question)
+    export_kind = _ask_export_intent(question)
+    if export_kind == "leads_csv" and not lead_intent:
+        qlx = question.lower()
+        if "meeting" in qlx:
+            lead_intent = {"statuses": [2], "label": "meeting booked"}
+        elif any(k in qlx for k in ("lead", "opportunity", "pipeline", "crm")):
+            lead_intent = {"statuses": [1, 2, 3, 4], "label": "positive-status leads"}
 
     try:
         inst=Instantly(cfg_meta["key"], cfg_meta.get("name",""), c.get("rate_limit_delay", 0.12))
@@ -2994,16 +3177,20 @@ def analytics_ask(question:str, profile_name:str=None)->str:
         log.debug("analytics_ask: campaigns fetched count=%d", len(camps))
         nf=prof.get("campaign_name_filter","")
         if nf: camps=[c_ for c_ in camps if nf.lower() in c_.get("name","").lower()]
+        if not camps:
+            return ("No campaigns match this profile’s filter.", [])
 
-        # Auto-select by activity
+        camp_by_id = {c["id"]: c for c in camps}
+
+        # Auto-select by activity (for aggregate metrics)
         sel=[]; smap={}
         for camp in camps:
             cid=camp["id"]
             ov_=inst.get_analytics_overview([cid],start_date,end_date)
             if ov_ and (ov_.get("emails_sent_count",0) or 0)>0:
                 sel.append(cid); smap[cid]=camp
-        if not sel:
-            return f"No campaign activity found for period: {dr_label}"
+        if not sel and not lead_intent:
+            return (f"No campaign activity found for period: {dr_label}", [])
 
         # Build compact metrics per campaign
         rows=[]
@@ -3018,6 +3205,12 @@ def analytics_ask(question:str, profile_name:str=None)->str:
             ct=sum(s.get("sent",0) for s in s0) if s0 else (ov_.get("contacted_count",0) or 0)
             rp=ov_.get("reply_count_unique",0) or 0
             ar=ov_.get("reply_count_automatic_unique",0) or 0
+            bn=ov_.get("bounced_count",0) or 0
+            us=ov_.get("unsubscribed_count",0) or 0
+            hrr=rp/ct if ct else 0.0
+            trr=(rp+ar)/ct if ct else 0.0
+            br=bn/ct if ct else 0.0
+            ur=us/ct if ct else 0.0
             rows.append({
                 "name": camp.get("name","")[:50],
                 "is_subsequence": is_sub,
@@ -3025,13 +3218,22 @@ def analytics_ask(question:str, profile_name:str=None)->str:
                 "emails_sent": ov_.get("emails_sent_count",0) or 0,
                 "human_replies": rp,
                 "auto_replies": ar,
-                "reply_rate": f"{rp/ct*100:.1f}%" if ct else "—",
+                "unsubscribed": us,
+                "human_reply_rate": round(hrr, 6),
+                "human_reply_rate_pct": f"{hrr*100:.2f}%" if ct else "—",
+                "total_reply_rate_decimal": round(trr, 6),
+                "total_reply_rate_pct": f"{trr*100:.2f}%" if ct else "—",
                 "total_reply_rate": f"{(rp+ar)/ct*100:.1f}%" if ct else "—",
+                "reply_rate": f"{rp/ct*100:.1f}%" if ct else "—",
+                "bounce_rate": round(br, 6),
+                "bounce_rate_pct": f"{br*100:.2f}%" if ct else "—",
+                "unsub_rate": round(ur, 6),
+                "unsub_rate_pct": f"{ur*100:.2f}%" if ct else "—",
                 "opportunities": ov_.get("total_opportunities",0) or 0,
                 "meetings_booked": ov_.get("total_meeting_booked",0) or 0,
                 "meetings_attended": ov_.get("total_meeting_completed",0) or 0,
                 "deals_closed": ov_.get("total_closed",0) or 0,
-                "bounced": ov_.get("bounced_count",0) or 0,
+                "bounced": bn,
             })
 
         primary=[r for r in rows if not r["is_subsequence"]]
@@ -3047,25 +3249,162 @@ def analytics_ask(question:str, profile_name:str=None)->str:
             "total_meetings_attended": sum(r["meetings_attended"] for r in primary),
             "total_deals_closed": sum(r["deals_closed"] for r in primary),
             "total_bounced": sum(r["bounced"] for r in primary),
+            "total_unsubscribed": sum(r["unsubscribed"] for r in primary),
         }
         ct_=totals["total_leads"]
         if ct_:
-            totals["human_reply_rate"]=f"{totals['total_human_replies']/ct_*100:.2f}%"
-            totals["total_reply_rate"]=f"{(totals['total_human_replies']+totals['total_auto_replies'])/ct_*100:.2f}%"
+            th=totals["total_human_replies"]; ta=totals["total_auto_replies"]
+            tb=totals["total_bounced"]; tu=totals["total_unsubscribed"]
+            totals["human_reply_rate"]=f"{th/ct_*100:.2f}%"
+            totals["human_reply_rate_decimal"]=round(th/ct_, 6)
+            totals["total_reply_rate"]=f"{(th+ta)/ct_*100:.2f}%"
+            totals["total_reply_rate_decimal"]=round((th+ta)/ct_, 6)
             totals["opp_rate"]=f"{totals['total_opportunities']/ct_*100:.2f}%"
+            totals["bounce_rate_portfolio_pct"]=f"{tb/ct_*100:.2f}%"
+            totals["bounce_rate_portfolio"]=round(tb/ct_, 6)
+            totals["unsub_rate_portfolio_pct"]=f"{tu/ct_*100:.2f}%"
+            totals["unsub_rate_portfolio"]=round(tu/ct_, 6)
+        if lead_intent and not rows:
+            totals["note"]="No sends in this window — aggregates may be zero; LEAD_ROWS still use CRM status dates."
 
-        ctx=(f"Today: {date.today()}\nClient: {client_name}\nPeriod: {dr_label}\n\n"
-             f"TOTALS (primary campaigns, dupes excluded):\n{_j.dumps(totals,indent=2)}\n\n"
-             f"BY CAMPAIGN:\n{_j.dumps(rows,indent=2)}")
+        metrics_summary={
+            "unique_leads_contacted_email1": totals["total_leads"],
+            "total_emails_sent_all_steps": totals["total_emails_sent"],
+            "opportunities_instantly_total_opportunities": totals["total_opportunities"],
+            "meetings_booked_sum_primary_campaigns": totals["total_meetings_booked"],
+            "portfolio_human_reply_rate_pct": totals.get("human_reply_rate") if ct_ else None,
+            "portfolio_total_reply_rate_incl_auto_pct": totals.get("total_reply_rate") if ct_ else None,
+            "portfolio_bounce_rate_pct": totals.get("bounce_rate_portfolio_pct") if ct_ else None,
+            "portfolio_unsub_rate_pct": totals.get("unsub_rate_portfolio_pct") if ct_ else None,
+        }
+        ctx=(f"Today: {date.today()}\n"
+             f"Analytics profile: {pname}\n"
+             f"Instantly client (segment): {client_name}\n"
+             f"Period: {dr_label}\n\n"
+             f"METRICS_SUMMARY (portfolio = primary campaigns only, same period):\n{_j.dumps(metrics_summary,indent=2)}\n\n"
+             f"TOTALS (primary campaigns, subsequences excluded from sums):\n{_j.dumps(totals,indent=2)}\n\n"
+             f"BY_CAMPAIGN (per-campaign human_reply_rate_pct, bounce_rate_pct, unsub_rate_pct; subsequence rows marked):\n"
+             f"{_j.dumps(rows,indent=2)}")
 
-        answer,_,_=ai_call(ASK_MODEL,ASK_SYSTEM,
-                           f"Data:\n{ctx}\n\nQuestion: {question}",
-                           max_tokens=350,temperature=0.3,
-                           client_slug=client_slug)
-        return answer.strip()
-    except Exception as e:
+        sys_prompt=ASK_SYSTEM
+        max_tok=min(1200, 350 + 25 * len(rows))
+        filtered_rows: List[dict] = []
+        if lead_intent:
+            from datetime import datetime as _dt
+            STATUS_L={1:"Interested",2:"Meeting Booked",3:"Meeting Completed",4:"Won/Closed"}
+            max_exp=100
+            cids_for_cap=sel if sel else [c["id"] for c in camps[:40]]
+            for cid in cids_for_cap[:40]:
+                ov_=inst.get_analytics_overview([cid],start_date,end_date) or {}
+                max_exp+=(ov_.get("total_opportunities",0) or 0)+(ov_.get("total_meeting_booked",0) or 0)
+            max_exp=min(max(max_exp,200),5000)
+            raw_leads=inst.list_positive_leads(max_expected=max_exp)
+            st_set=set(lead_intent["statuses"])
+            allowed=set(camp_by_id.keys())
+            pick=_ask_pick_campaign_ids(question,camps)
+            if pick:
+                allowed&=pick
+            id_ok={str(x) for x in allowed}
+            d0=d1=None
+            if start_date:
+                try: d0=_dt.strptime(start_date[:10],"%Y-%m-%d").date()
+                except Exception: pass
+            if end_date:
+                try: d1=_dt.strptime(end_date[:10],"%Y-%m-%d").date()
+                except Exception: pass
+            for L in raw_leads:
+                if L.get("lt_interest_status") not in st_set:
+                    continue
+                lcid=L.get("campaign") or L.get("campaign_id") or ""
+                if not lcid or str(lcid) not in id_ok:
+                    continue
+                td=_lead_ts_date(L)
+                if d0 or d1:
+                    if td is None:
+                        continue
+                    if d0 and td<d0: continue
+                    if d1 and td>d1: continue
+                cname="?"
+                for aid, co in camp_by_id.items():
+                    if str(aid)==str(lcid):
+                        cname=co.get("name","?")[:60]
+                        break
+                filtered_rows.append({
+                    "email": L.get("email",""),
+                    "status": STATUS_L.get(L.get("lt_interest_status",0),"?"),
+                    "campaign": cname,
+                    "last_updated": (L.get("timestamp_updated") or L.get("timestamp_created") or "")[:19],
+                })
+            MAX_SHOW=120
+            total_m=len(filtered_rows)
+            shown=filtered_rows[:MAX_SHOW]
+            ctx+=(f"\n\nLEAD_ROWS ({lead_intent['label']}) — matched={total_m} after date+campaign filter"
+                  f"{'' if len(shown)>=total_m else f' (showing first {len(shown)})'}:\n"
+                  f"{_j.dumps(shown,indent=2)}")
+            sys_prompt=ASK_SYSTEM_LEADS
+            max_tok=4096
+
+        try:
+            answer, _, _ = ai_call(
+                ASK_MODEL, sys_prompt,
+                f"Data:\n{ctx}\n\nQuestion: {question}",
+                max_tokens=max_tok, temperature=0.3,
+                client_slug=client_slug,
+            )
+            txt = answer.strip()
+        except Exception:
+            log.exception("analytics_ask ai_call profile=%r", pname)
+            return ("❌ AI could not complete this request (see server logs).", [])
+
+        from datetime import datetime as _dtnow
+        tag_fn=_dtnow.now().strftime("%d_%b_%y").lower()
+        safe_name=re.sub(r"[^\w\-.]+","_",str(client_name))[:40] or "client"
+        meta={"name": cfg_meta.get("name", client_name)}
+        ek=export_kind
+        if ek == "leads_csv" and not lead_intent:
+            ek = "full_csv"
+        if ek=="leads_csv" and lead_intent:
+            lab=lead_intent.get("label","leads").replace(" ","_").replace("/","_")
+            try:
+                attachments.append((f"leads_{lab}_{tag_fn}.csv", _leads_table_csv_bytes(filtered_rows)))
+            except Exception:
+                log.exception("analytics_ask leads_csv export profile=%r", pname)
+        elif ek in ("full_csv","full_xlsx","full_both"):
+            exp_ids=sel if sel else list(camp_by_id.keys())[:80]
+            if exp_ids:
+                sm_ap={cid: camp_by_id[cid] for cid in exp_ids if cid in camp_by_id}
+                cov_d: Dict[str, Any] = {}
+                st_d: Dict[str, Any] = {}
+                for cid in exp_ids:
+                    cov_d[cid]=inst.get_analytics_overview([cid], start_date, end_date)
+                    st_d[cid]=inst.get_analytics_steps(cid, start_date, end_date)
+                ex_ctx=analytics_compute_export_context(
+                    inst, exp_ids, sm_ap, cov_d, st_d,
+                    start_date, end_date, prof.get("benchmarks", {}), prof.get("manual_fields"),
+                )
+                if ex_ctx:
+                    dr_pt=analytics_dr_pretty(start_date, end_date)
+                    if ek in ("full_csv", "full_both"):
+                        try:
+                            attachments.append((f"analytics_{safe_name}_{tag_fn}.csv",
+                                                analytics_csv_to_bytes(ex_ctx, meta, dr_pt)))
+                        except Exception:
+                            log.exception("analytics_ask full_csv profile=%r", pname)
+                    if ek in ("full_xlsx", "full_both"):
+                        try:
+                            xb=analytics_workbook_to_bytes(ex_ctx, meta, dr_pt)
+                            if xb:
+                                attachments.append((f"analytics_{safe_name}_{tag_fn}.xlsx", xb))
+                        except Exception:
+                            log.exception("analytics_ask full_xlsx profile=%r", pname)
+        log.info(
+            "analytics_ask ok profile=%r client=%r attachments=%d",
+            pname, client_name, len(attachments),
+        )
+        return (txt, attachments)
+    except Exception:
         log.exception("analytics_ask")
-        return f"❌ Error: {e}"
+        return ("❌ Request failed (see server logs).", [])
 
 
 def cmd_ask(args):
@@ -3079,12 +3418,19 @@ def cmd_ask(args):
         console.print("[dim]  mailclaw ask --profile will 'show me this week stats'[/]")
         return
     console.print("[dim]🤔 Fetching data and thinking…[/]")
-    answer=analytics_ask(q, profile_name=getattr(args,"profile",None))
+    answer, files = analytics_ask(q, profile_name=getattr(args,"profile",None))
     console.print()
     console.print(Panel(f"[white]{answer}[/]",
                         title=f"[dim cyan]🤖 Mailclaw AI[/]",
                         subtitle=f"[dim]{q[:70]}[/]",
                         border_style="cyan",expand=False))
+    if files:
+        dl = Path.home() / "Downloads"
+        dl.mkdir(parents=True, exist_ok=True)
+        for fn, data in files:
+            p = dl / fn
+            p.write_bytes(data)
+            console.print(f"[green]✓[/] Saved → [yellow]{p}[/]")
 
 
 def cmd_bot(_args):
@@ -3119,8 +3465,12 @@ def cmd_bot(_args):
     log.debug("Health check server on port %d", _hport)
 
     try:
-        from telegram import Update
+        from telegram import Update, BotCommand
         from telegram.ext import Application, CommandHandler, MessageHandler, filters
+        try:
+            from telegram.error import TelegramError
+        except ImportError:
+            TelegramError = Exception  # type: ignore[misc,assignment]
     except ImportError:
         console.print("[red]pip install python-telegram-bot[/]"); sys.exit(1)
     c = cfg_load()
@@ -3132,9 +3482,77 @@ def cmd_bot(_args):
         console.print("[red]No token. Set TELEGRAM_TOKEN env var.[/]")
         sys.exit(1)
 
+    # ── Telegram guard rails (env-tunable) ───────────────────────────────────
+    TG_MAX_QUESTION_CHARS = int(os.environ.get("TELEGRAM_MAX_QUESTION_CHARS", "4000"))
+    TG_MAX_REPLY_CHARS = int(os.environ.get("TELEGRAM_MAX_REPLY_CHARS", "3900"))
+    TG_MAX_DOC_BYTES = int(os.environ.get("TELEGRAM_MAX_DOC_BYTES", str(45 * 1024 * 1024)))
+    TG_MAX_CSV_BYTES = int(os.environ.get("TELEGRAM_MAX_CSV_BYTES", str(20 * 1024 * 1024)))
+    TG_MAX_CSV_ROWS = int(os.environ.get("TELEGRAM_MAX_CSV_ROWS", "80000"))
+    TG_COOLDOWN_SEC = float(os.environ.get("TELEGRAM_COOLDOWN_SEC", "5"))
+    TG_MAX_ATTACHMENTS = int(os.environ.get("TELEGRAM_MAX_ATTACHMENTS", "5"))
+    _tg_last_action: Dict[int, float] = {}
+    _tg_rate_lock = threading.Lock()
+
     def ok_fn(uid: int) -> bool:
         allowed = c.get("telegram_allowed_users") or []
         return (not allowed) or (uid in allowed)
+
+    def _tg_rate_allow(uid: int) -> bool:
+        """One heavy action per user per cooldown window (anti-abuse)."""
+        import time as _time
+        with _tg_rate_lock:
+            now = _time.monotonic()
+            last = _tg_last_action.get(uid, 0.0)
+            if now - last < TG_COOLDOWN_SEC:
+                return False
+            _tg_last_action[uid] = now
+            return True
+
+    def _tg_trunc_text(s: str, max_len: int) -> str:
+        if len(s) <= max_len:
+            return s
+        return s[: max(0, max_len - 24)] + "\n…(truncated)"
+
+    def _tg_safe_filename(name: str) -> str:
+        base = os.path.basename(name or "file")
+        base = re.sub(r"[^a-zA-Z0-9._\-]", "_", base).strip("._") or "export"
+        return base[:120]
+
+    def _tg_err_reply() -> str:
+        return "Something went wrong. If it persists, check server logs."
+
+    async def _tg_reply_text(message: Any, text: str, parse_mode: Optional[str] = None):
+        try:
+            await message.reply_text(_tg_trunc_text(text, TG_MAX_REPLY_CHARS), parse_mode=parse_mode)
+        except TelegramError as e:
+            log.warning("telegram reply_text failed: %s", e)
+        except Exception:
+            log.exception("telegram reply_text")
+
+    async def _tg_reply_document(message: Any, buf: Any, filename: str, caption: str = ""):
+        cap = _tg_trunc_text(caption, 1024)
+        try:
+            await message.reply_document(
+                document=buf, filename=filename, caption=cap,
+            )
+        except TelegramError as e:
+            log.warning("telegram reply_document failed: %s", e)
+        except Exception:
+            log.exception("telegram reply_document")
+
+    async def _tg_send_document(bot: Any, chat_id: Any, buf: Any, filename: str, caption: str = ""):
+        cap = _tg_trunc_text(caption, 1024)
+        try:
+            await bot.send_document(
+                chat_id=chat_id,
+                document=buf,
+                filename=filename,
+                caption=cap,
+            )
+        except TelegramError as e:
+            log.warning("telegram send_document failed: %s", e)
+        except Exception:
+            log.exception("telegram send_document")
 
     import random as _random
 
@@ -3163,6 +3581,31 @@ def cmd_bot(_args):
         "Well aren't you polite. /help whenever you're done being charming.",
     ]
 
+    def _tg_ask_usage_markdown() -> str:
+        """Help text for /ask including optional profile and configured profile names."""
+        ap = analytics_profiles_all()
+        parts = [
+            "*Ask analytics*",
+            "",
+            "`/ask <question>` — uses the *default* profile (first configured).",
+            "`/ask <profile> <question>` — uses that analytics profile’s Instantly client + filters.",
+            "",
+            "_Or send a normal message_ (same rules; optional first word = profile name).",
+            "",
+        ]
+        if ap:
+            plist = "\n".join(f"• `{k}`" for k in sorted(ap.keys(), key=str.lower))
+            parts.append("*Profiles:*\n" + plist)
+        else:
+            parts.append("_No profiles yet._ Set `ANALYTICS_PROFILE_*` or `mailclaw analytics-profiles`.")
+        parts.extend([
+            "",
+            "*Examples:*",
+            "`/ask how many meetings this week?`",
+            "`/ask will what was our reply rate last month?`",
+        ])
+        return "\n".join(parts)
+
     async def start(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
@@ -3171,17 +3614,20 @@ def cmd_bot(_args):
             "/analytics — full report (lists profiles)\n"
             "/analytics `will` — run a specific profile\n"
             "/analytics `will 2026-03-01 2026-03-31` — with date range\n"
+            "/ask — natural-language analytics (`/ask` alone shows profile help)\n"
             "/balance — Reoon verification credits\n"
             "/help — show this again\n\n"
-            "*Or just ask:*\n"
+            "*Quick ask (no slash):*\n"
             "_how many meetings did we book this month?_\n"
-            "_what was our reply rate last week?_\n\n"
+            "_will how many leads last week?_ _(profile first)_\n"
+            "_what meetings did we book this week — export csv_\n\n"
             "📎 Drop a `.csv` → email verification",
             parse_mode="Markdown")
 
     async def help_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await start(u,ctx)
+        await u.message.reply_text(_tg_ask_usage_markdown(), parse_mode="Markdown")
 
     async def unknown_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
@@ -3202,76 +3648,215 @@ def cmd_bot(_args):
         await ask_cmd(u,ctx)
 
     async def balance_cmd(u,ctx):
-        c2=cfg_load(); rot=ReoonRotator(c2["reoon_keys"],c2.get("daily_limit",2000))
-        lines=["📊 *Credits*\n"]+[f"{'✅' if rot.remaining(k)>0 else '❌'} `{k['name']}` {rot.remaining(k)} left" for k in c2["reoon_keys"]]+[f"\n*Total:* {rot.total_remaining()}"]
-        await u.message.reply_text("\n".join(lines),parse_mode="Markdown")
+        if not ok_fn(u.effective_user.id):
+            return
+        try:
+            c2=cfg_load()
+            rot = ReoonRotator(c2["reoon_keys"], c2.get("daily_limit", 2000))
+            # Same as CLI `mailclaw balance`: GET each key’s live balance from Reoon.
+            # Without this, `remaining()` is only `daily_limit - used_today` (local) and
+            # looks like the full daily cap on every key when `used_today` is 0.
+            try:
+                synced = await asyncio.to_thread(rot.sync_from_live, True)
+            except Exception:
+                log.exception("telegram balance_cmd sync_from_live")
+                synced = False
+            parts = ["📊 *Reoon credits*"]
+            if synced:
+                parts.append("_Live from Reoon API (`remaining_daily_credits` + instant)._")
+            else:
+                parts.append(
+                    "⚠️ _Reoon API unreachable — showing local estimate only "
+                    "(`daily_limit` − `used_today`). Check server logs._"
+                )
+            parts.append("")
+            if not rot.keys:
+                parts.append("_No Reoon keys configured._")
+            else:
+                for k in rot.keys:
+                    rem = rot.remaining(k)
+                    tag = "✅" if rem > 0 else "❌"
+                    if synced and "live_instant" in k:
+                        try:
+                            inst_n = int(k["live_instant"])  # type: ignore[arg-type]
+                        except (TypeError, ValueError):
+                            log.warning(
+                                "telegram balance_cmd bad live_instant key=%r val=%r",
+                                k.get("name"), k.get("live_instant"),
+                            )
+                            inst_n = 0
+                        parts.append(
+                            f"{tag} `{k['name']}`  *{rem:,}* daily  ·  instant: *{inst_n:,}*"
+                        )
+                    else:
+                        parts.append(f"{tag} `{k['name']}`  *{rem:,}* left today (estimate)")
+                parts.append("")
+                parts.append(f"*Total daily remaining:* {rot.total_remaining():,}")
+            await _tg_reply_text(u.message, "\n".join(parts), parse_mode="Markdown")
+        except Exception:
+            log.exception("telegram balance_cmd")
+            await _tg_reply_text(u.message, _tg_err_reply())
 
     async def handle_doc(u,ctx):
+        if not ok_fn(u.effective_user.id):
+            return
+        if not _tg_rate_allow(u.effective_user.id):
+            await u.message.reply_text(f"⏳ Wait {int(TG_COOLDOWN_SEC)}s before sending another file.")
+            return
         doc=u.message.document
-        if not (doc.file_name or "").endswith(".csv"): await u.message.reply_text("❌ Send a .csv"); return
+        if not (doc.file_name or "").endswith(".csv"):
+            await u.message.reply_text("❌ Send a .csv only.")
+            return
+        sz = getattr(doc, "file_size", None) or 0
+        if sz and sz > TG_MAX_CSV_BYTES:
+            await u.message.reply_text(f"❌ File too large (max {TG_MAX_CSV_BYTES // (1024*1024)} MB).")
+            return
         tmp=APP_DIR/f"bot_{u.message.message_id}.csv"
-        f_=await ctx.bot.get_file(doc.file_id); await f_.download_to_drive(str(tmp))
-        rows,cols=csv_read(tmp); col_map=heuristic_map(cols)
-        email_col=col_map.get("email") or next((c_ for c_ in cols if "email" in c_.lower()),None)
-        if not email_col: await u.message.reply_text("❌ No email column found."); tmp.unlink(missing_ok=True); return
-        emails=[r.get(email_col,"").strip() for r in rows if r.get(email_col,"")]
-        await u.message.reply_text(f"📥 `{doc.file_name}` — {len(emails):,} emails\nVerifying…",parse_mode="Markdown")
-        c2=cfg_load(); rot=ReoonRotator(c2["reoon_keys"],c2.get("daily_limit",2000))
-        if not rot.total_remaining(): await u.message.reply_text("❌ No Reoon credits."); tmp.unlink(missing_ok=True); return
-        all_res={}; rem=list(emails); bn=0
-        while rem and rot.available():
-            key=rot.available()[0]; cap=rot.remaining(key); batch=rem[:cap]; rem=rem[cap:]; bn+=1
-            tid,err=reoon_submit_bulk(batch,key["key"],f"Bot-{bn}")
-            if not tid: await u.message.reply_text(f"⚠️ Batch {bn}: {err}"); continue
-            rot.record(key["name"],len(batch)); await u.message.reply_text(f"⏳ Task {tid} submitted…")
-            for _ in range(120):
-                await asyncio.sleep(10)
-                data=reoon_poll(tid,key["key"])
-                if data and data.get("status")=="completed": all_res.update(data.get("results",{})); break
-        if not all_res: await u.message.reply_text("❌ No results."); tmp.unlink(missing_ok=True); return
-        hist_mark_verified(all_res); proc=_process_reoon_results(all_res)
-        await u.message.reply_text(f"✅ Safe: {len(proc['safe'])} | Catchall: {len(proc['catchall'])} | Dropped: {len(proc['dropped'])}")
-        hist2=hist_load(); orig_map={r.get(email_col,"").lower():r for r in rows}
-        async def send_csv(ver_rows,fname):
-            if not ver_rows: return
-            merged=[{**orig_map.get(v.get("email","").lower(),{}),**v,
-                     "lp_last_verified":hist2.get(v.get("email",""),{}).get("last_verified","")} for v in ver_rows]
-            buf=io.StringIO(); w=csv.DictWriter(buf,fieldnames=list(merged[0].keys()))
-            w.writeheader(); w.writerows(merged); buf.seek(0)
-            await ctx.bot.send_document(chat_id=u.effective_chat.id,
-                document=io.BytesIO(buf.getvalue().encode()),filename=fname,
-                caption=f"📎 {fname} ({len(merged)} rows)")
-        await send_csv(proc["safe"],    f"safe_{doc.file_name}")
-        await send_csv(proc["catchall"],f"catchall_{doc.file_name}")
-        for esp_,er in proc["by_esp"].items():
-            await send_csv(er,f"safe_{esp_}_{doc.file_name}")
-        tmp.unlink(missing_ok=True)
+        try:
+            f_=await ctx.bot.get_file(doc.file_id); await f_.download_to_drive(str(tmp))
+            try:
+                if tmp.stat().st_size > TG_MAX_CSV_BYTES:
+                    tmp.unlink(missing_ok=True)
+                    await u.message.reply_text(f"❌ File too large (max {TG_MAX_CSV_BYTES // (1024*1024)} MB).")
+                    return
+            except OSError:
+                pass
+            rows,cols=csv_read(tmp); col_map=heuristic_map(cols)
+            if len(rows) > TG_MAX_CSV_ROWS:
+                tmp.unlink(missing_ok=True)
+                await u.message.reply_text(f"❌ Too many rows (max {TG_MAX_CSV_ROWS:,}). Split the file.")
+                return
+            email_col=col_map.get("email") or next((c_ for c_ in cols if "email" in c_.lower()),None)
+            if not email_col:
+                await u.message.reply_text("❌ No email column found."); tmp.unlink(missing_ok=True); return
+            emails=[r.get(email_col,"").strip() for r in rows if r.get(email_col,"")]
+            await u.message.reply_text(f"📥 `{doc.file_name}` — {len(emails):,} emails\nVerifying…",parse_mode="Markdown")
+            c2=cfg_load(); rot=ReoonRotator(c2["reoon_keys"],c2.get("daily_limit",2000))
+            if not rot.total_remaining():
+                await u.message.reply_text("❌ No Reoon credits."); tmp.unlink(missing_ok=True); return
+            all_res={}; rem=list(emails); bn=0
+            while rem and rot.available():
+                key=rot.available()[0]; cap=rot.remaining(key); batch=rem[:cap]; rem=rem[cap:]; bn+=1
+                tid,err=reoon_submit_bulk(batch,key["key"],f"Bot-{bn}")
+                if not tid:
+                    await u.message.reply_text(f"⚠️ Batch {bn}: {_tg_trunc_text(str(err),200)}"); continue
+                rot.record(key["name"],len(batch)); await u.message.reply_text(f"⏳ Task {tid} submitted…")
+                for _ in range(120):
+                    await asyncio.sleep(10)
+                    data=reoon_poll(tid,key["key"])
+                    if data and data.get("status")=="completed": all_res.update(data.get("results",{})); break
+            if not all_res:
+                await u.message.reply_text("❌ No results."); tmp.unlink(missing_ok=True); return
+            hist_mark_verified(all_res); proc=_process_reoon_results(all_res)
+            await u.message.reply_text(f"✅ Safe: {len(proc['safe'])} | Catchall: {len(proc['catchall'])} | Dropped: {len(proc['dropped'])}")
+            hist2=hist_load(); orig_map={r.get(email_col,"").lower():r for r in rows}
+            async def send_csv(ver_rows,fname):
+                if not ver_rows: return
+                merged=[{**orig_map.get(v.get("email","").lower(),{}),**v,
+                         "lp_last_verified":hist2.get(v.get("email",""),{}).get("last_verified","")} for v in ver_rows]
+                seen: Set[str] = set()
+                fieldnames: List[str] = []
+                for row in merged:
+                    for k in row.keys():
+                        if k not in seen:
+                            seen.add(k)
+                            fieldnames.append(k)
+                buf=io.StringIO(); w=csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+                w.writeheader(); w.writerows(merged); buf.seek(0)
+                raw=buf.getvalue().encode()
+                if len(raw) > TG_MAX_DOC_BYTES:
+                    await u.message.reply_text(f"❌ Output `{fname}` too large to send (max {TG_MAX_DOC_BYTES // (1024*1024)} MB).")
+                    return
+                await _tg_send_document(
+                    ctx.bot, u.effective_chat.id,
+                    io.BytesIO(raw), _tg_safe_filename(fname),
+                    caption=f"📎 {_tg_safe_filename(fname)} ({len(merged)} rows)",
+                )
+            await send_csv(proc["safe"],    f"safe_{doc.file_name}")
+            await send_csv(proc["catchall"],f"catchall_{doc.file_name}")
+            for esp_,er in proc["by_esp"].items():
+                await send_csv(er,f"safe_{esp_}_{doc.file_name}")
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            log.exception("telegram handle_doc")
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            await u.message.reply_text(_tg_err_reply())
 
     async def ask_cmd(u,ctx):
         """Handle /ask and plain-text messages with AI."""
-        if not ok_fn(u.effective_user.id): return
-        # /ask <question>  OR  plain text message
+        if not ok_fn(u.effective_user.id):
+            return
+        if not _tg_rate_allow(u.effective_user.id):
+            await u.message.reply_text(f"⏳ Wait {int(TG_COOLDOWN_SEC)}s between analytics requests.")
+            return
+        # /ask <profile>? <question>  OR  plain text (optional profile as first word)
         if ctx.args:
-            q=" ".join(ctx.args)
+            q = " ".join(ctx.args)
         else:
-            q=(u.message.text or "").strip()
+            raw = (u.message.text or "").strip()
+            # Bare `/ask` or `/ask@Bot` leaves no args; strip command so we don't send "/ask" to the model
+            raw = re.sub(r"^/ask(?:@[A-Za-z0-9_]+)?\s*", "", raw, count=1, flags=re.IGNORECASE).strip()
+            q = raw
+        if not q:
+            await u.message.reply_text(_tg_ask_usage_markdown(), parse_mode="Markdown")
+            return
+        if len(q) > TG_MAX_QUESTION_CHARS:
+            await u.message.reply_text(f"❌ Question too long (max {TG_MAX_QUESTION_CHARS} characters).")
+            return
+        all_p=analytics_profiles_all()
+        pname_res: Optional[str] = None
+        if all_p:
+            parts = q.split(None, 1)
+            if parts:
+                cand = parts[0].strip()
+                for pk in all_p.keys():
+                    if cand.lower() == pk.lower():
+                        q = (parts[1] if len(parts) > 1 else "").strip()
+                        pname_res = pk
+                        break
         if not q:
             await u.message.reply_text(
-                "Ask me anything:\n`how many meetings this week?`\n"
-                "`what was our reply rate yesterday?`",
-                parse_mode="Markdown"); return
+                "Add a question after the profile name, e.g.\n"
+                "`/ask will how many meetings this week?`",
+                parse_mode="Markdown",
+            )
+            return
         await u.message.reply_text("🤔 Fetching live data…")
-        all_p=analytics_profiles_all()
-        pname=list(all_p.keys())[0] if all_p else None
         try:
-            answer=analytics_ask(q,profile_name=pname)
-            # Escape any markdown issues
-            await u.message.reply_text(f"🤖 {answer}")
-        except Exception as e:
-            await u.message.reply_text(f"❌ Error: {e}")
+            answer, files = analytics_ask(q, profile_name=pname_res)
+            await _tg_reply_text(u.message, f"🤖 {answer}")
+            n_att = 0
+            for fn, blob in files:
+                if n_att >= TG_MAX_ATTACHMENTS:
+                    await _tg_reply_text(u.message, f"⚠️ Only first {TG_MAX_ATTACHMENTS} attachments sent.")
+                    break
+                if len(blob) > TG_MAX_DOC_BYTES:
+                    await _tg_reply_text(u.message, f"⚠️ Skipped `{_tg_safe_filename(fn)}` (too large for Telegram).")
+                    continue
+                n_att += 1
+                await _tg_reply_document(
+                    u.message,
+                    io.BytesIO(blob),
+                    _tg_safe_filename(fn),
+                    caption=f"📎 {_tg_safe_filename(fn)}",
+                )
+        except Exception:
+            log.exception("telegram ask_cmd")
+            await _tg_reply_text(u.message, _tg_err_reply())
 
     async def analytics_cmd(u,ctx):
+        if not ok_fn(u.effective_user.id):
+            return
+        if not _tg_rate_allow(u.effective_user.id):
+            await u.message.reply_text(f"⏳ Wait {int(TG_COOLDOWN_SEC)}s between analytics runs.")
+            return
         c2=cfg_load(); args_=ctx.args or []
+        if len(args_) > 24:
+            await u.message.reply_text("❌ Too many arguments.")
+            return
         all_prof=analytics_profiles_all()
         profiles=sorted({k.lower() for k in all_prof.keys()})
         if not args_:
@@ -3281,6 +3866,9 @@ def cmd_bot(_args):
             await u.message.reply_text(f"*Analytics Profiles*\n\n{plist}\n\nOptional dates: /analytics will 2026-03-01 2026-03-31",parse_mode="Markdown"); return
 
         prof_name=args_[0].lower()
+        if not prof_name or len(prof_name) > 64:
+            await u.message.reply_text("❌ Invalid profile name.")
+            return
         prof=analytics_profile_load(prof_name)
         if not prof:
             await u.message.reply_text(f"Profile `{prof_name}` not found. Available: {', '.join(profiles)}",parse_mode="Markdown"); return
@@ -3419,11 +4007,53 @@ def cmd_bot(_args):
                 report=report[:4080]+"\n…(truncated)"
             await u.message.reply_text(report)
 
-        except Exception as e:
-            await u.message.reply_text(f"Error: {e}"); log.exception("tg analytics error")
+            try:
+                ex_ctx = analytics_compute_export_context(
+                    inst2, sel_ids, sel_map, _auto_ov, camp_steps2,
+                    tg_start, tg_end, benchmarks, prof.get("manual_fields"),
+                )
+                if ex_ctx:
+                    dr_pt = analytics_dr_pretty(tg_start, tg_end)
+                    xbytes = analytics_workbook_to_bytes(ex_ctx, client_meta, dr_pt)
+                    if xbytes:
+                        if len(xbytes) > TG_MAX_DOC_BYTES:
+                            await u.message.reply_text(
+                                f"⚠️ Excel export too large to send ({len(xbytes)//(1024*1024)} MB; max {TG_MAX_DOC_BYTES//(1024*1024)} MB)."
+                            )
+                        else:
+                            fname = _tg_safe_filename(f"analytics_{client_meta['name']}_{ex_ctx['tag']}.xlsx")
+                            await _tg_reply_document(
+                                u.message,
+                                io.BytesIO(xbytes),
+                                fname,
+                                caption="Excel: per-campaign sheets + UNIFIED + LEADS AUDIT",
+                            )
+            except Exception:
+                log.exception("tg analytics Excel export failed")
+
+        except Exception:
+            log.exception("telegram analytics_cmd")
+            await u.message.reply_text(_tg_err_reply())
 
 
-    app=Application.builder().token(c["telegram_token"]).build()
+    async def _tg_post_init(application: Any):
+        try:
+            await application.bot.set_my_commands([
+                BotCommand("start", "Welcome and commands"),
+                BotCommand("help", "Help and /ask [profile] usage"),
+                BotCommand("analytics", "Reports; /analytics lists profiles"),
+                BotCommand("ask", "Analytics: /ask [profile] your question"),
+                BotCommand("balance", "Reoon verification credits"),
+            ])
+        except Exception:
+            log.exception("telegram set_my_commands failed (bot still starts)")
+
+    app = (
+        Application.builder()
+        .token(c["telegram_token"])
+        .post_init(_tg_post_init)
+        .build()
+    )
     app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("help",    help_cmd))
     app.add_handler(CommandHandler("balance", balance_cmd))
@@ -3436,6 +4066,8 @@ def cmd_bot(_args):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_text))
 
     console.print(Panel(f"[bold green]Mailclaw Bot running[/] — health: :{_hport}/health",border_style="green"))
+    if not (c.get("telegram_allowed_users") or []):
+        log.warning("telegram_allowed_users is empty — bot accepts any Telegram user. Set allowlist in production.")
     _bot_started["ok"] = True
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
@@ -3689,6 +4321,684 @@ def _bench_color(val:float,bench:Optional[float],higher_is_better:bool=False)->s
     if bench is None or val is None: return "white"
     if higher_is_better: return "green" if val>=bench else "red"
     else:                return "green" if val<=bench else "red"
+
+VARIANT_NAMES_STEP = {"0": "A", "1": "B", "2": "C", "3": "D", "4": "E"}
+
+def analytics_step_sort_key(x: dict):
+    try:
+        return (int(x["step"] or 99), str(x["variant"] or ""))
+    except Exception:
+        return (99, str(x.get("variant") or ""))
+
+def analytics_extract_metrics(ov: Optional[dict], steps: Optional[List[dict]] = None) -> dict:
+    """Same metrics dict as CLI analytics (overview + optional per-step data)."""
+    if not ov:
+        return {k: 0 for k in [
+            "emails_sent", "contacted", "bounced", "unsubscribed", "replies", "auto_replies", "total_replies",
+            "interested", "mtg_booked", "mtg_completed", "closed", "negative", "total_opportunities",
+            "bounce_rate", "unsub_rate", "reply_rate", "total_reply_rate", "int_rate", "mtg_book_rate", "mtg_att_rate",
+            "human_reply_rate", "opp_rate", "contacted_api",
+        ]}
+    es = ov.get("emails_sent_count", 0) or 0
+    ct_api = ov.get("contacted_count", 0) or 0
+    if steps:
+        step0s = [s for s in steps if (s.get("step") in (0, "0") or str(s.get("step", "")) == "0") and s.get("sent", 0) > 0]
+        ct = sum(s.get("sent", 0) for s in step0s) if step0s else ct_api
+    else:
+        ct = ct_api
+    bn = ov.get("bounced_count", 0) or 0
+    us = ov.get("unsubscribed_count", 0) or 0
+    rp = ov.get("reply_count_unique", 0) or 0
+    ar = ov.get("reply_count_automatic_unique", 0) or 0
+    rp_total = rp + ar
+    intr = ov.get("total_interested", 0) or 0
+    mb = ov.get("total_meeting_booked", 0) or 0
+    mc = ov.get("total_meeting_completed", 0) or 0
+    cl = ov.get("total_closed", 0) or 0
+    total_opps = ov.get("total_opportunities", 0) or 0
+    neg = max(0, rp - total_opps)
+    return dict(
+        emails_sent=es, contacted=ct, contacted_api=ct_api,
+        bounced=bn, unsubscribed=us,
+        replies=rp, auto_replies=ar, total_replies=rp_total,
+        interested=intr, mtg_booked=mb, total_opportunities=total_opps,
+        mtg_completed=mc, closed=cl, negative=neg,
+        bounce_rate=bn / ct if ct else 0,
+        unsub_rate=us / ct if ct else 0,
+        reply_rate=rp / ct if ct else 0,
+        human_reply_rate=rp / ct if ct else 0,
+        total_reply_rate=rp_total / ct if ct else 0,
+        opp_rate=total_opps / ct if ct else 0,
+        int_rate=intr / total_opps if total_opps else 0,
+        mtg_book_rate=mb / total_opps if total_opps else 0,
+        mtg_att_rate=mc / mb if mb else 0,
+    )
+
+def analytics_dr_pretty(start_date: str, end_date: str) -> str:
+    def _fmt(d: str) -> str:
+        try:
+            return datetime.strptime(d, "%Y-%m-%d").strftime("%d-%b-%Y")
+        except Exception:
+            return d or "All time"
+    return f"{_fmt(start_date)} to {_fmt(end_date or datetime.now().strftime('%Y-%m-%d'))}"
+
+def analytics_compute_export_context(
+    inst: "Instantly",
+    selected_ids: List[str],
+    sel_map: Dict[str, Any],
+    camp_overviews: Dict[str, Optional[dict]],
+    camp_steps: Dict[str, List[dict]],
+    start_date: str,
+    end_date: str,
+    bench: dict,
+    manual: Optional[dict] = None,
+) -> Optional[dict]:
+    """
+    Build the same data structures as CLI analytics export: unified totals (deduped),
+    step aggregates, positive-leads audit rows — for Excel/CSV.
+    """
+    from collections import defaultdict
+    manual = manual or {}
+    try:
+        follow_ups = float(manual.get("follow_ups") or 0)
+    except Exception:
+        follow_ups = 0.0
+    try:
+        sales_usd = float(manual.get("sales_usd") or 0)
+    except Exception:
+        sales_usd = 0.0
+
+    if not selected_ids:
+        return None
+
+    subseq_ids: set = set()
+    for cid in selected_ids:
+        camp = sel_map.get(cid, {})
+        n_lower = camp.get("name", "").lower()
+        if "subsequence" in n_lower or "subseq" in n_lower:
+            subseq_ids.add(cid)
+    primary_ids = [cid for cid in selected_ids if cid not in subseq_ids]
+    subseq_count = len(subseq_ids)
+
+    step_agg: Dict[tuple, dict] = {}
+    for cid in selected_ids:
+        for s in camp_steps.get(cid, []):
+            if not s.get("sent", 0):
+                continue
+            key = (s.get("step"), s.get("variant"))
+            if key not in step_agg:
+                step_agg[key] = {
+                    "step": s.get("step"), "variant": s.get("variant"),
+                    "sent": 0, "unique_opened": 0, "unique_replies": 0, "unique_clicks": 0,
+                    "replies_automatic": 0, "unique_opportunities": 0,
+                }
+            ag = step_agg[key]
+            ag["sent"] += s.get("sent", 0)
+            ag["unique_opened"] += s.get("unique_opened", 0)
+            ag["unique_replies"] += s.get("unique_replies", 0)
+            ag["unique_clicks"] += s.get("unique_clicks", 0)
+            ag["replies_automatic"] += s.get("replies_automatic", 0)
+            ag["unique_opportunities"] += s.get("unique_opportunities", 0)
+    sorted_steps = [s for s in sorted(step_agg.values(), key=analytics_step_sort_key) if s.get("sent", 0) > 0]
+
+    _primary_step_agg: Dict[tuple, dict] = {}
+    for cid in primary_ids:
+        for s in camp_steps.get(cid, []):
+            if not s.get("sent", 0):
+                continue
+            key = (s.get("step"), s.get("variant"))
+            if key not in _primary_step_agg:
+                _primary_step_agg[key] = {
+                    "step": s.get("step"), "variant": s.get("variant"),
+                    "sent": 0, "unique_opened": 0, "unique_replies": 0, "unique_clicks": 0,
+                    "replies_automatic": 0, "unique_opportunities": 0,
+                }
+            ag = _primary_step_agg[key]
+            for f_ in ("sent", "unique_opened", "unique_replies", "unique_clicks", "replies_automatic", "unique_opportunities"):
+                ag[f_] += s.get(f_, 0)
+    primary_sorted_steps = [s for s in sorted(_primary_step_agg.values(), key=analytics_step_sort_key) if s.get("sent", 0) > 0]
+
+    overview = inst.get_analytics_overview(selected_ids, start_date, end_date)
+    _camp_metrics_list = [
+        analytics_extract_metrics(camp_overviews.get(cid), steps=camp_steps.get(cid, []))
+        for cid in primary_ids if camp_overviews.get(cid)
+    ]
+
+    def _usum(key):
+        return sum(m.get(key, 0) for m in _camp_metrics_list)
+
+    _ct_sum = _usum("contacted")
+    _es_sum = _usum("emails_sent")
+    _rp_sum = _usum("replies")
+    _ar_sum = _usum("auto_replies")
+    _rp_total = _rp_sum + _ar_sum
+    _bn_sum = _usum("bounced")
+    _us_sum = _usum("unsubscribed")
+    _intr_sum = _usum("interested")
+    _mb_sum = _usum("mtg_booked")
+    _mc_sum = _usum("mtg_completed")
+    _cl_sum = _usum("closed")
+    _opps_sum = _usum("total_opportunities")
+    _neg_sum = max(0, _rp_sum - _opps_sum)
+    unified = dict(
+        emails_sent=_es_sum, contacted=_ct_sum, contacted_api=_usum("contacted_api"),
+        bounced=_bn_sum, unsubscribed=_us_sum,
+        replies=_rp_sum, auto_replies=_ar_sum, total_replies=_rp_total,
+        interested=_intr_sum, mtg_booked=_mb_sum, total_opportunities=_opps_sum,
+        mtg_completed=_mc_sum, closed=_cl_sum, negative=_neg_sum,
+        bounce_rate=_bn_sum / _ct_sum if _ct_sum else 0,
+        unsub_rate=_us_sum / _ct_sum if _ct_sum else 0,
+        reply_rate=_rp_sum / _ct_sum if _ct_sum else 0,
+        human_reply_rate=_rp_sum / _ct_sum if _ct_sum else 0,
+        total_reply_rate=_rp_total / _ct_sum if _ct_sum else 0,
+        opp_rate=_opps_sum / _ct_sum if _ct_sum else 0,
+        int_rate=_intr_sum / _opps_sum if _opps_sum else 0,
+        mtg_book_rate=_mb_sum / _opps_sum if _opps_sum else 0,
+        mtg_att_rate=_mc_sum / _mb_sum if _mb_sum else 0,
+    )
+
+    ov_ = overview or {}
+    max_exp_total = sum([
+        ov_.get("total_interested", 0) or 0,
+        ov_.get("total_meeting_booked", 0) or 0,
+        ov_.get("total_meeting_completed", 0) or 0,
+        ov_.get("total_closed", 0) or 0,
+    ]) or 100
+    all_positive_leads = inst.list_positive_leads(max_expected=max_exp_total)
+    STATUS_RANK = {1: 1, 2: 2, 3: 3, 4: 4}
+    email_best_status: Dict[str, int] = {}
+    for lead in all_positive_leads:
+        em = lead.get("email", "")
+        if not em:
+            continue
+        st = lead.get("lt_interest_status", 0)
+        if em not in email_best_status or STATUS_RANK.get(st, 0) > STATUS_RANK.get(email_best_status[em], 0):
+            email_best_status[em] = st
+    corr_interested = sum(1 for s in email_best_status.values() if s == 1)
+    corr_booked = sum(1 for s in email_best_status.values() if s == 2)
+    corr_completed = sum(1 for s in email_best_status.values() if s == 3)
+    corr_closed = sum(1 for s in email_best_status.values() if s == 4)
+    api_booked = unified.get("mtg_booked", 0)
+    api_int = unified.get("interested", 0)
+    _opps_canonical = unified.get("total_opportunities", 0)
+    _ct = unified.get("contacted", 0)
+    unified["mtg_booked"] = corr_booked
+    unified["interested"] = corr_interested
+    unified["mtg_completed"] = corr_completed
+    unified["closed"] = corr_closed
+    unified["human_reply_rate"] = unified.get("reply_rate", 0)
+    unified["opp_rate"] = _opps_canonical / _ct if _ct else 0
+    unified["int_rate"] = corr_interested / _opps_canonical if _opps_canonical else 0
+    unified["mtg_book_rate"] = corr_booked / _opps_canonical if _opps_canonical else 0
+    unified["mtg_att_rate"] = corr_completed / corr_booked if corr_booked else 0
+    unified["negative"] = max(0, unified.get("replies", 0) - _opps_canonical)
+
+    MAX_EMAIL_FETCHES = 40
+    total_pos = len(all_positive_leads)
+    fetch_timestamps = total_pos > 0 and total_pos <= MAX_EMAIL_FETCHES
+    STATUS_LABELS = {1: "Interested", 2: "Meeting Booked", 3: "Meeting Completed", 4: "Won/Closed"}
+    selected_set = set(selected_ids)
+    camp_pos_leads: Dict[str, List[dict]] = defaultdict(list)
+    for lead in all_positive_leads:
+        lcid = lead.get("campaign") or lead.get("campaign_id", "")
+        if lcid in selected_set:
+            camp_pos_leads[lcid].append(lead)
+
+    email_appearances: Dict[str, list] = defaultdict(list)
+    for cid in selected_ids:
+        cname = sel_map[cid].get("name", "Unnamed")
+        for lead in camp_pos_leads.get(cid, []):
+            email = lead.get("email", "")
+            if not email:
+                continue
+            status = STATUS_LABELS.get(lead.get("lt_interest_status", 0), "?")
+            ts_raw = lead.get("timestamp_updated") or lead.get("timestamp_created", "")
+            try:
+                ts_crm = datetime.strptime(ts_raw[:19], "%Y-%m-%dT%H:%M:%S").strftime("%d-%b-%Y %H:%M")
+            except Exception:
+                ts_crm = ts_raw[:16] if ts_raw else "—"
+            first_reply_ts = "—"
+            is_auto = "—"
+            if fetch_timestamps:
+                fr = inst.get_first_reply(cid, email)
+                if fr:
+                    try:
+                        first_reply_ts = datetime.strptime(
+                            fr["timestamp"][:19], "%Y-%m-%dT%H:%M:%S"
+                        ).strftime("%d-%b-%Y %H:%M")
+                    except Exception:
+                        first_reply_ts = fr["timestamp"][:16]
+                    is_auto = "🤖 Auto" if fr["is_auto_reply"] else "👤 Human"
+            email_appearances[email].append({
+                "campaign": cname,
+                "status": status,
+                "ts_crm": ts_crm,
+                "ts_reply": first_reply_ts,
+                "reply_type": is_auto,
+                "cid": cid,
+                "lead_id": lead.get("id", ""),
+            })
+
+    dupes = {e: v for e, v in email_appearances.items() if len(v) > 1}
+
+    tag = datetime.now().strftime("%d_%b_%y").lower()
+    return {
+        "bench": bench,
+        "follow_ups": follow_ups,
+        "sales_usd": sales_usd,
+        "selected_ids": selected_ids,
+        "sel_map": sel_map,
+        "camp_overviews": camp_overviews,
+        "camp_steps": camp_steps,
+        "unified": unified,
+        "sorted_steps": sorted_steps,
+        "primary_sorted_steps": primary_sorted_steps,
+        "email_appearances": dict(email_appearances),
+        "dupes": dupes,
+        "fetch_timestamps": fetch_timestamps,
+        "subseq_count": subseq_count,
+        "tag": tag,
+        "overview": overview,
+    }
+
+def analytics_workbook_to_bytes(ctx: dict, client_meta: dict, dr_pretty: str) -> Optional[bytes]:
+    """
+    Same Excel as CLI analytics: one sheet per campaign, UNIFIED, and LEADS AUDIT.
+    ctx must match analytics_compute_export_context output (or equivalent keys).
+    Returns None if openpyxl is not installed.
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    except ImportError:
+        return None
+
+    b_ = ctx["bench"]
+    follow_ups = float(ctx.get("follow_ups") or 0)
+    sales_usd = float(ctx.get("sales_usd") or 0)
+    selected_ids = ctx["selected_ids"]
+    sel_map = ctx["sel_map"]
+    camp_overviews = ctx["camp_overviews"]
+    camp_steps = ctx["camp_steps"]
+    unified = ctx["unified"]
+    sorted_steps = ctx["sorted_steps"]
+    email_appearances = ctx["email_appearances"]
+    dupes = ctx["dupes"]
+    fetch_timestamps = ctx["fetch_timestamps"]
+
+    THIN = Side(style="thin", color="CCCCCC")
+    BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+
+    C_CAMPAIGN_BG = "1A1A2E"
+    C_CAMPAIGN_FG = "E8E8FF"
+    C_UNIFIED_BG = "0F3460"
+    C_UNIFIED_FG = "FFD700"
+    C_COL_HDR_BG = "16213E"
+    C_COL_HDR_FG = "FFFFFF"
+    C_STEP_HDR_BG = "1E3A5F"
+    C_STEP_HDR_FG = "FFFFFF"
+    C_GREEN = "1B5E20"
+    C_RED = "B71C1C"
+    C_ALT = "F0F4FF"
+    C_WHITE = "FFFFFF"
+
+    def _fill(hex_):
+        return PatternFill("solid", start_color=hex_, end_color=hex_)
+
+    def _font(bold=False, color="000000", size=11, italic=False):
+        return Font(name="Arial", bold=bold, color=color, size=size, italic=italic)
+
+    def _align(h="left", wrap=False):
+        return Alignment(horizontal=h, vertical="center", wrap_text=wrap)
+
+    def _cell(ws, row, col, val, bold=False, fg="000000", bg=None, size=11,
+              italic=False, h="left", num_fmt=None, border=True):
+        c = ws.cell(row=row, column=col, value=val)
+        c.font = _font(bold=bold, color=fg, size=size, italic=italic)
+        c.alignment = _align(h=h)
+        if bg:
+            c.fill = _fill(bg)
+        if num_fmt:
+            c.number_format = num_fmt
+        if border:
+            c.border = BORDER
+        return c
+
+    def _merge_header(ws, row, text, fg, bg, size, cols=4):
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=cols)
+        c = ws.cell(row=row, column=1, value=text)
+        c.font = _font(bold=True, color=fg, size=size)
+        c.fill = _fill(bg)
+        c.alignment = _align(h="center")
+        c.border = BORDER
+
+    def good(rv, key, hi=True):
+        bv = b_.get(key)
+        if bv is None or rv is None:
+            return None
+        return (rv >= bv) if hi else (rv <= bv)
+
+    def _all_sections():
+        for cid in selected_ids:
+            cname = sel_map[cid].get("name", "Unnamed")
+            cov = camp_overviews.get(cid)
+            if not cov:
+                continue
+            yield (
+                cname,
+                analytics_extract_metrics(cov, steps=camp_steps.get(cid, [])),
+                camp_steps.get(cid, []),
+                False,
+            )
+        yield f"TOTAL — {len(selected_ids)} Campaigns", unified, sorted_steps, True
+
+    def _write_metrics(ws, row, label, m, fu=0, su=0, is_unified=False):
+        hdr_bg = C_UNIFIED_BG if is_unified else C_CAMPAIGN_BG
+        hdr_fg = C_UNIFIED_FG if is_unified else C_CAMPAIGN_FG
+        hdr_size = 14 if is_unified else 13
+        _merge_header(ws, row, label, hdr_fg, hdr_bg, hdr_size, cols=4)
+        row += 1
+
+        if is_unified:
+            ascii_art = (
+                f"  MAILCLAW  ·  ANALYTICS REPORT\n"
+                f"  Client: {client_meta['name']}  ·  {dr_pretty}\n"
+                f"  {len(selected_ids)} campaigns selected"
+            )
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+            c = ws.cell(row=row, column=1, value=ascii_art)
+            c.font = _font(bold=False, color=C_UNIFIED_FG, size=9, italic=True)
+            c.fill = _fill("0A1628")
+            c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            ws.row_dimensions[row].height = 48
+            row += 1
+
+        for ci, h in enumerate(["Metric", "Benchmark", "Actual", "Rate"], 1):
+            _cell(ws, row, ci, h, bold=True, fg=C_COL_HDR_FG, bg=C_COL_HDR_BG, size=10, h="center")
+        row += 1
+
+        ct = m.get("contacted", 0)
+        es = m.get("emails_sent", 0)
+
+        def metric(name, actual, rate_str, is_good=None, indent=0, is_sub=False, bench_str=""):
+            nonlocal row
+            alt = (row % 2 == 0)
+            bg = C_ALT if alt else C_WHITE
+            pad = "    " * indent + name
+            bold = not is_sub
+            _cell(ws, row, 1, pad, bold=bold, bg=bg, size=10)
+            _cell(ws, row, 2, bench_str, bg=bg, size=10, h="center", italic=True, fg="888888")
+            _cell(ws, row, 3, actual, bold=bold, bg=bg, size=10, h="right")
+            rate_fg = C_GREEN if is_good is True else (C_RED if is_good is False else "555555")
+            _cell(ws, row, 4, rate_str, bold=False, fg=rate_fg, bg=bg, size=10, h="right")
+            row += 1
+
+        def bstr(key):
+            bv = b_.get(key)
+            return f"{bv * 100:.0f}%" if bv is not None else ""
+
+        metric("Unique Leads Contacted", f"{ct:,}", "—")
+        metric("Emails Sent", f"{es:,}", "—")
+        metric("Bounce", f"{m['bounced']:,}", f"{m['bounce_rate'] * 100:.1f}%",
+               good(m["bounce_rate"], "bounce_rate", hi=False),
+               indent=1, is_sub=True, bench_str=bstr("bounce_rate"))
+        metric("Unsubscribed", f"{m['unsubscribed']:,}", f"{m['unsub_rate'] * 100:.1f}%",
+               good(m["unsub_rate"], "unsubscribe_rate", hi=False),
+               indent=1, is_sub=True, bench_str=bstr("unsubscribe_rate"))
+        ws.append(["", "", "", ""])
+        row += 1
+        metric("Total Replies (incl. auto)", f"{m['total_replies']:,}", f"{m['total_reply_rate'] * 100:.1f}%",
+               good(m["total_reply_rate"], "reply_rate", hi=True), bench_str=bstr("reply_rate"))
+        metric("Human Replies", f"{m['replies']:,}", f"{m['reply_rate'] * 100:.1f}%",
+               indent=1, is_sub=True)
+        metric("Auto-Replies (OOO)", f"{m['auto_replies']:,}", "",
+               indent=1, is_sub=True)
+        metric("Interested", f"{m['interested']:,}", f"{m['int_rate'] * 100:.1f}%",
+               good(m["int_rate"], "positive_reply_rate", hi=True),
+               indent=1, is_sub=True, bench_str=bstr("positive_reply_rate"))
+        metric("Negative", f"{m['negative']:,}", "", indent=1, is_sub=True)
+        ws.append(["", "", "", ""])
+        row += 1
+        metric("📅 Meetings Booked", f"{m['mtg_booked']:,}", f"{m['mtg_book_rate'] * 100:.1f}%",
+               good(m["mtg_book_rate"], "meeting_book_rate", hi=True), bench_str=bstr("meeting_book_rate"))
+        metric("✅ Meetings Attended (API)", f"{m['mtg_completed']:,}", f"{m['mtg_att_rate'] * 100:.1f}%",
+               good(m["mtg_att_rate"], "meeting_attend_rate", hi=True),
+               indent=1, is_sub=True, bench_str=bstr("meeting_attend_rate"))
+        metric("🏆 Deals Closed", f"{m['closed']:,}", "")
+        ws.append(["", "", "", ""])
+        row += 1
+        metric("Follow Ups", f"{int(fu):,}", f"{fu / ct * 100:.1f}%" if ct else "")
+        metric("💰 Sales ($)", f"${int(su):,}", "")
+        ws.append(["", "", "", ""])
+        row += 1
+        return row
+
+    def _write_steps(ws, row, label, steps):
+        rows_ = [s for s in steps if s.get("sent", 0) > 0]
+        if not rows_:
+            return row
+        _merge_header(ws, row, f"Step Breakdown — {label}",
+                      C_STEP_HDR_FG, C_STEP_HDR_BG, 11, cols=7)
+        row += 1
+        for ci, h in enumerate(["Email", "Variant", "Sent", "Replied", "Reply%", "Positive", "Pos%"], 1):
+            _cell(ws, row, ci, h, bold=True, fg=C_COL_HDR_FG, bg=C_COL_HDR_BG, size=10, h="center")
+        row += 1
+        for s in sorted(rows_, key=analytics_step_sort_key):
+            sent = s["sent"]
+            rep = s["unique_replies"]
+            pos = s.get("unique_opportunities", 0) or 0
+            try:
+                en = f"Email {int(s['step']) + 1}"
+            except Exception:
+                en = str(s.get("step", "?"))
+            vl = VARIANT_NAMES_STEP.get(str(s.get("variant") or ""), str(s.get("variant") or ""))
+            alt = (row % 2 == 0)
+            bg = C_ALT if alt else C_WHITE
+            rr = rep / sent if sent else 0
+            pr = pos / rep if rep else 0
+            r_good = good(rr, "reply_rate", hi=True)
+            p_good = good(pr, "positive_reply_rate", hi=True)
+            r_fg = C_GREEN if r_good else (C_RED if r_good is False else "000000")
+            p_fg = C_GREEN if p_good else (C_RED if p_good is False else "555555")
+            for ci_, v_ in enumerate([en, vl, f"{sent:,}", f"{rep:,}"], 1):
+                _cell(ws, row, ci_, v_, bg=bg, size=10)
+            _cell(ws, row, 5, f"{rr * 100:.1f}%", fg=r_fg, bg=bg, size=10, h="right")
+            _cell(ws, row, 6, f"{pos:,}", bg=bg, size=10, h="right")
+            _cell(ws, row, 7, f"{pr * 100:.1f}%" if rep else "—", fg=p_fg, bg=bg, size=10, h="right")
+            row += 1
+        ws.append(["", "", "", "", "", "", ""])
+        row += 1
+        return row
+
+    MAX_EMAIL_FETCHES = 40
+    wb = Workbook()
+    first = True
+    for camp_label, m_, steps_, is_u in _all_sections():
+        sname = ("UNIFIED" if is_u else camp_label[:28].strip().replace("/", "_").replace("\\", "_"))
+        if first:
+            ws = wb.active
+            ws.title = sname
+            first = False
+        else:
+            ws = wb.create_sheet(title=sname)
+        ws.column_dimensions["A"].width = 34
+        ws.column_dimensions["B"].width = 12
+        ws.column_dimensions["C"].width = 14
+        ws.column_dimensions["D"].width = 12
+        ws.column_dimensions["E"].width = 10
+        ws.column_dimensions["F"].width = 10
+        ws.column_dimensions["G"].width = 10
+        ws.freeze_panes = "A3"
+        row = 1
+        row = _write_metrics(ws, row, camp_label, m_,
+                             fu=follow_ups if is_u else 0,
+                             su=sales_usd if is_u else 0,
+                             is_unified=is_u)
+        row = _write_steps(ws, row, camp_label, steps_)
+
+    ws_audit = wb.create_sheet(title="LEADS AUDIT")
+    ws_audit.column_dimensions["A"].width = 34
+    ws_audit.column_dimensions["B"].width = 20
+    ws_audit.column_dimensions["C"].width = 20
+    ws_audit.column_dimensions["D"].width = 12
+    ws_audit.column_dimensions["E"].width = 20
+    ws_audit.column_dimensions["F"].width = 42
+    ws_audit.column_dimensions["G"].width = 10
+
+    ws_audit.merge_cells(start_row=1, start_column=1, end_row=1, end_column=7)
+    ah = ws_audit.cell(row=1, column=1,
+                       value=f"POSITIVE LEADS AUDIT  ·  {client_meta['name']}  ·  {dr_pretty}")
+    ah.font = _font(bold=True, color="FFD700", size=13)
+    ah.fill = _fill("4A0080")
+    ah.alignment = _align(h="center")
+    ah.border = BORDER
+
+    ws_audit.merge_cells(start_row=2, start_column=1, end_row=2, end_column=7)
+    sh = ws_audit.cell(row=2, column=1,
+                       value=(
+                           f"{'⚠  ' + str(len(dupes)) + ' duplicate email(s) found!' if dupes else '✓ No duplicates found'}  |  "
+                           f"{'First Reply timestamps from emails API' if fetch_timestamps else 'First Reply: not fetched (>' + str(MAX_EMAIL_FETCHES) + ' leads)'}"
+                       ))
+    sh.font = _font(bold=True, color="FFFFFF" if not dupes else "FF4444", size=11)
+    sh.fill = _fill("2D0050" if not dupes else "5C0000")
+    sh.alignment = _align(h="center")
+    sh.border = BORDER
+
+    for ci_, h_ in enumerate(["Email", "Status", "First Reply", "Reply Type", "CRM Updated", "Campaign", "Dupe?"], 1):
+        _cell(ws_audit, 3, ci_, h_, bold=True, fg=C_COL_HDR_FG, bg=C_COL_HDR_BG, size=10, h="center")
+
+    audit_row = 4
+    STATUS_COLORS_XL = {
+        "Interested": ("1B5E20", "E8F5E9"),
+        "Meeting Booked": ("E65100", "FFF3E0"),
+        "Meeting Completed": ("0D47A1", "E3F2FD"),
+        "Won/Closed": ("4A148C", "F3E5F5"),
+    }
+    for email_, entries_ in sorted(email_appearances.items()):
+        for occ in entries_:
+            is_dupe = email_ in dupes
+            fg_s, bg_s = STATUS_COLORS_XL.get(occ["status"], ("000000", "FFFFFF"))
+            row_bg = "FFE8E8" if is_dupe else ("F0F4FF" if audit_row % 2 == 0 else "FFFFFF")
+            _cell(ws_audit, audit_row, 1, email_, bg=row_bg, size=10, bold=is_dupe)
+            _cell(ws_audit, audit_row, 2, occ["status"], fg=fg_s, bg=bg_s, size=10, bold=True, h="center")
+            _cell(ws_audit, audit_row, 3, occ["ts_reply"], bg=row_bg, size=9, h="center")
+            rt_color = "888888" if occ["reply_type"] == "—" else ("CC0000" if "Auto" in occ["reply_type"] else "1B5E20")
+            _cell(ws_audit, audit_row, 4, occ["reply_type"], fg=rt_color, bg=row_bg, size=9, h="center")
+            _cell(ws_audit, audit_row, 5, occ["ts_crm"], bg=row_bg, size=9, h="center")
+            _cell(ws_audit, audit_row, 6, occ["campaign"], bg=row_bg, size=9)
+            _cell(ws_audit, audit_row, 7, "⚠ DUPE" if is_dupe else "",
+                  fg="FFFFFF" if is_dupe else "888888",
+                  bg="CC0000" if is_dupe else row_bg,
+                  bold=is_dupe, size=10, h="center")
+            audit_row += 1
+
+    ws_audit.freeze_panes = "A4"
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
+def analytics_csv_to_bytes(ctx: dict, client_meta: dict, dr_pretty: str) -> bytes:
+    """Same CSV as CLI analytics export (metrics + steps + leads audit)."""
+    b_ = ctx["bench"]
+    follow_ups = float(ctx.get("follow_ups") or 0)
+    sales_usd = float(ctx.get("sales_usd") or 0)
+    selected_ids = ctx["selected_ids"]
+    sel_map = ctx["sel_map"]
+    camp_overviews = ctx["camp_overviews"]
+    camp_steps = ctx["camp_steps"]
+    unified = ctx["unified"]
+    sorted_steps = ctx["sorted_steps"]
+    email_appearances = ctx["email_appearances"]
+    dupes = ctx["dupes"]
+    fetch_timestamps = ctx["fetch_timestamps"]
+    MAX_EMAIL_FETCHES = 40
+
+    rows_out: List[List[Any]] = []
+
+    def bstr2(key):
+        bv = b_.get(key)
+        return f"{bv * 100:.0f}%" if bv is not None else ""
+
+    def csv_block(label: str, m: dict, fu: float = 0, su: float = 0):
+        ct = m.get("contacted", 0)
+        rows_out.append([label, "", "", ""])
+        rows_out.append(["Metric", "Benchmark", "Actual", "Rate"])
+        rows_out.append(["Unique Leads Contacted", "", ct, ""])
+        rows_out.append(["Emails Sent", "", m["emails_sent"], ""])
+        rows_out.append(["Bounce", bstr2("bounce_rate"), m["bounced"], f"{m['bounce_rate'] * 100:.2f}%"])
+        rows_out.append(["Unsubscribed", bstr2("unsubscribe_rate"), m["unsubscribed"], f"{m['unsub_rate'] * 100:.2f}%"])
+        rows_out.append(["", "", "", ""])
+        rows_out.append(["Total Replies", bstr2("reply_rate"), m["total_replies"], f"{m['total_reply_rate'] * 100:.2f}%"])
+        rows_out.append(["  Human Replies", "", m["replies"], f"{m['reply_rate'] * 100:.2f}%"])
+        rows_out.append(["  Auto-Replies", "", m["auto_replies"], ""])
+        rows_out.append(["  Interested", bstr2("positive_reply_rate"), m["interested"], f"{m['int_rate'] * 100:.2f}%"])
+        rows_out.append(["  Negative", "", m["negative"], ""])
+        rows_out.append(["", "", "", ""])
+        rows_out.append(["Meetings Booked", bstr2("meeting_book_rate"), m["mtg_booked"], f"{m['mtg_book_rate'] * 100:.2f}%"])
+        rows_out.append(["Meetings Attended", "", m["mtg_completed"], f"{m['mtg_att_rate'] * 100:.2f}%"])
+        rows_out.append(["Deals Closed", "", m["closed"], ""])
+        rows_out.append(["Follow Ups", "", int(fu), f"{fu / ct * 100:.2f}%" if ct else ""])
+        rows_out.append(["Sales ($)", "", f"${int(su)}", ""])
+        rows_out.append(["", "", "", ""])
+
+    def csv_steps2(label: str, steps: list):
+        rows_ = [s for s in steps if s.get("sent", 0) > 0]
+        if not rows_:
+            return
+        rows_out.append([f"Steps: {label}", "", "", "", "", "", ""])
+        rows_out.append(["Email", "Variant", "Sent", "Replied", "Reply%", "Positive", "Pos%"])
+        for s in sorted(rows_, key=analytics_step_sort_key):
+            sent = s["sent"]
+            rep = s["unique_replies"]
+            pos = s.get("unique_opportunities", 0) or 0
+            try:
+                en = f"Email {int(s['step']) + 1}"
+            except Exception:
+                en = str(s.get("step", "?"))
+            vl = VARIANT_NAMES_STEP.get(str(s.get("variant") or ""), str(s.get("variant") or ""))
+            rows_out.append([
+                en, vl, sent, rep,
+                f"{rep / sent * 100:.2f}%" if sent else "", pos,
+                f"{pos / rep * 100:.2f}%" if rep else "",
+            ])
+        rows_out.append(["", "", "", "", "", "", ""])
+
+    def _all_sections():
+        for cid in selected_ids:
+            cname = sel_map[cid].get("name", "Unnamed")
+            cov = camp_overviews.get(cid)
+            if not cov:
+                continue
+            yield cname, analytics_extract_metrics(cov, steps=camp_steps.get(cid, [])), camp_steps.get(cid, []), False
+        yield f"TOTAL — {len(selected_ids)} Campaigns", unified, sorted_steps, True
+
+    for camp_label, m_, steps_, is_u in _all_sections():
+        csv_block(camp_label, m_, fu=follow_ups if is_u else 0, su=sales_usd if is_u else 0)
+        csv_steps2(camp_label, steps_)
+    rows_out.append(["POSITIVE LEADS AUDIT", "", "", "", "", "", ""])
+    rows_out.append([
+        f"{'⚠ ' + str(len(dupes)) + ' duplicates' if dupes else 'No duplicates'}",
+        f"{'First Reply fetched via emails API' if fetch_timestamps else 'First Reply: not fetched (>' + str(MAX_EMAIL_FETCHES) + ' leads)'}",
+        "", "", "", "", "",
+    ])
+    rows_out.append(["Email", "Status", "First Reply", "Reply Type", "CRM Updated", "Campaign", "Dupe?"])
+    for em_, entries_ in sorted(email_appearances.items()):
+        for occ in entries_:
+            rows_out.append([
+                em_, occ["status"], occ["ts_reply"], occ["reply_type"],
+                occ["ts_crm"], occ["campaign"],
+                "DUPE" if em_ in dupes else "",
+            ])
+    rows_out.append(["", "", "", "", "", "", ""])
+
+    buf = io.StringIO()
+    import csv as _csv
+    w = _csv.writer(buf)
+    w.writerows(rows_out)
+    return buf.getvalue().encode("utf-8")
+
 
 def cmd_analytics(_args):
     """
@@ -3989,50 +5299,6 @@ def cmd_analytics(_args):
     console.print(f"[cyan]→[/] Fetching positive leads for dupe audit ({len(selected_ids)} campaigns)…")
     STATUS_LABELS={1:"Interested",2:"Meeting Booked",3:"Meeting Completed",4:"Won/Closed"}
 
-    def extract_metrics(ov:dict, steps:list=None)->dict:
-        if not ov: return {k:0 for k in ["emails_sent","contacted","bounced","unsubscribed",
-            "replies","auto_replies","total_replies","interested","mtg_booked","mtg_completed",
-            "closed","negative","total_opportunities","bounce_rate","unsub_rate","reply_rate",
-            "total_reply_rate","int_rate","mtg_book_rate","mtg_att_rate"]}
-        es  =ov.get("emails_sent_count",0)       or 0
-        # contacted_count from API = emails_sent_count for multi-step campaigns (WRONG).
-        # Correct unique leads = Email 1 (step 0) sent count from steps data.
-        # Fall back to contacted_count only if steps unavailable.
-        ct_api=ov.get("contacted_count",0) or 0
-        if steps:
-            step0s=[s for s in steps if (s.get("step") in (0,"0") or
-                    str(s.get("step",""))=="0") and s.get("sent",0)>0]
-            ct=sum(s.get("sent",0) for s in step0s) if step0s else ct_api
-        else:
-            ct=ct_api
-        bn  =ov.get("bounced_count",0)            or 0
-        us  =ov.get("unsubscribed_count",0)       or 0
-        rp  =ov.get("reply_count_unique",0)       or 0
-        ar  =ov.get("reply_count_automatic_unique",0) or 0
-        rp_total=rp+ar
-        intr=ov.get("total_interested",0)         or 0
-        mb  =ov.get("total_meeting_booked",0)     or 0
-        mc  =ov.get("total_meeting_completed",0)  or 0
-        cl  =ov.get("total_closed",0)             or 0
-        total_opps=ov.get("total_opportunities",0) or 0
-        neg=max(0, rp - total_opps)
-        # int_rate: % of opps still at Interested (not yet promoted to booked)
-        # opp_rate: total_opportunities / contacted = Instantly's headline opp rate
-        return dict(emails_sent=es,contacted=ct,contacted_api=ct_api,
-                    bounced=bn,unsubscribed=us,
-                    replies=rp,auto_replies=ar,total_replies=rp_total,
-                    interested=intr,mtg_booked=mb,total_opportunities=total_opps,
-                    mtg_completed=mc,closed=cl,negative=neg,
-                    bounce_rate    =bn/ct            if ct         else 0,
-                    unsub_rate     =us/ct            if ct         else 0,
-                    reply_rate     =rp/ct            if ct         else 0,
-                    human_reply_rate=rp/ct           if ct         else 0,
-                    total_reply_rate=rp_total/ct     if ct         else 0,
-                    opp_rate       =total_opps/ct    if ct         else 0,
-                    int_rate       =intr/total_opps  if total_opps else 0,
-                    mtg_book_rate  =mb/total_opps    if total_opps else 0,
-                    mtg_att_rate   =mc/mb            if mb         else 0)
-
     # Build unified summing ONLY non-subsequence campaigns.
     # Subsequence campaigns re-use leads already in primary campaigns, so including
     # them inflates unique leads, reply counts, and CRM totals.
@@ -4043,8 +5309,8 @@ def cmd_analytics(_args):
         console.print(f"[dim]  ⚡ {subseq_count} subsequence campaign(s) shown per-campaign "
                       f"but excluded from unified totals (leads overlap with primary campaigns)[/]")
 
-    unified_raw=extract_metrics(overview)  # fallback reference only
-    _camp_metrics_list=[extract_metrics(camp_overviews.get(cid),steps=camp_steps.get(cid,[]))
+    unified_raw=analytics_extract_metrics(overview)  # fallback reference only
+    _camp_metrics_list=[analytics_extract_metrics(camp_overviews.get(cid),steps=camp_steps.get(cid,[]))
                         for cid in primary_ids if camp_overviews.get(cid)]
     def _usum(key): return sum(m.get(key,0) for m in _camp_metrics_list)
     _ct_sum=_usum("contacted"); _es_sum=_usum("emails_sent")
@@ -4219,7 +5485,7 @@ def cmd_analytics(_args):
         cov=camp_overviews.get(cid)
         if not cov:
             console.print(f"[red]  ✗ No data: {cname}[/]"); continue
-        cm=extract_metrics(cov, steps=camp_steps.get(cid,[]))
+        cm=analytics_extract_metrics(cov, steps=camp_steps.get(cid,[]))
         console.print()
         title_prefix="[dim]⚡ SUBSEQUENCE  — [/]" if is_sub else ""
         console.print(make_overview_table(title_prefix+cname[:70], cm))
@@ -4440,324 +5706,38 @@ def cmd_analytics(_args):
             cname=sel_map[cid].get("name","Unnamed")
             cov=camp_overviews.get(cid)
             if not cov: continue
-            yield cname, extract_metrics(cov, steps=camp_steps.get(cid,[])), camp_steps.get(cid,[]), False
+            yield cname, analytics_extract_metrics(cov, steps=camp_steps.get(cid,[])), camp_steps.get(cid,[]), False
         yield f"TOTAL — {len(selected_ids)} Campaigns", unified, sorted_steps, True
+
+    export_ctx=dict(
+        bench=bench,follow_ups=follow_ups,sales_usd=sales_usd,
+        selected_ids=selected_ids,sel_map=sel_map,
+        camp_overviews=camp_overviews,camp_steps=camp_steps,
+        unified=unified,sorted_steps=sorted_steps,
+        email_appearances=email_appearances,dupes=dupes,
+        fetch_timestamps=fetch_timestamps,tag=tag,
+    )
 
     if "Excel" in fmt_pick:
         try:
-            from openpyxl import Workbook
-            from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side)
-            from openpyxl.utils import get_column_letter
+            import openpyxl  # noqa: F401
         except ImportError:
             console.print("[yellow]openpyxl not found — installing…[/]")
             import subprocess, sys
             subprocess.check_call([sys.executable,"-m","pip","install","openpyxl","--quiet"])
-            from openpyxl import Workbook
-            from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side)
-            from openpyxl.utils import get_column_letter
             console.print("[green]✓[/] openpyxl installed.")
-
-        THIN=Side(style="thin",color="CCCCCC")
-        BORDER=Border(left=THIN,right=THIN,top=THIN,bottom=THIN)
-
-        # Colour palette
-        C_CAMPAIGN_BG  ="1A1A2E"   # deep navy  — campaign header bg
-        C_CAMPAIGN_FG  ="E8E8FF"   # soft white  — campaign header text
-        C_UNIFIED_BG   ="0F3460"   # darker navy — unified header bg
-        C_UNIFIED_FG   ="FFD700"   # gold        — unified header text
-        C_COL_HDR_BG   ="16213E"   # dark blue   — column header bg
-        C_COL_HDR_FG   ="FFFFFF"   # white
-        C_STEP_HDR_BG  ="1E3A5F"   # mid blue    — step section header
-        C_STEP_HDR_FG  ="FFFFFF"
-        C_GREEN        ="1B5E20"
-        C_RED          ="B71C1C"
-        C_ALT          ="F0F4FF"   # light blue alternating row
-        C_WHITE        ="FFFFFF"
-
-        def _fill(hex_): return PatternFill("solid",start_color=hex_,end_color=hex_)
-        def _font(bold=False,color="000000",size=11,italic=False):
-            return Font(name="Arial",bold=bold,color=color,size=size,italic=italic)
-        def _align(h="left",wrap=False):
-            return Alignment(horizontal=h,vertical="center",wrap_text=wrap)
-
-        def _cell(ws,row,col,val,bold=False,fg="000000",bg=None,size=11,
-                  italic=False,h="left",num_fmt=None,border=True):
-            c=ws.cell(row=row,column=col,value=val)
-            c.font=_font(bold=bold,color=fg,size=size,italic=italic)
-            c.alignment=_align(h=h)
-            if bg: c.fill=_fill(bg)
-            if num_fmt: c.number_format=num_fmt
-            if border: c.border=BORDER
-            return c
-
-        def _merge_header(ws,row,text,fg,bg,size,cols=4):
-            ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=cols)
-            c=ws.cell(row=row,column=1,value=text)
-            c.font=_font(bold=True,color=fg,size=size)
-            c.fill=_fill(bg)
-            c.alignment=_align(h="center")
-            c.border=BORDER
-
-        # good() hoisted here so _write_steps can also access it
-        def good(rv,key,hi=True):
-            bv=b_.get(key)
-            if bv is None or rv is None: return None
-            return (rv>=bv) if hi else (rv<=bv)
-
-        def _write_metrics(ws,row,label,m,fu=0,su=0,is_unified=False):
-            # section header
-            hdr_bg=C_UNIFIED_BG if is_unified else C_CAMPAIGN_BG
-            hdr_fg=C_UNIFIED_FG if is_unified else C_CAMPAIGN_FG
-            hdr_size=14 if is_unified else 13
-            _merge_header(ws,row,label,hdr_fg,hdr_bg,hdr_size,cols=4)
-            row+=1
-
-            if is_unified:
-                # ASCII art as a merged cell
-                ascii_art=(
-                    f"  MAILCLAW  ·  ANALYTICS REPORT\n"
-                    f"  Client: {client_meta['name']}  ·  {dr_pretty}\n"
-                    f"  {len(selected_ids)} campaigns selected"
-                )
-                ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=4)
-                c=ws.cell(row=row,column=1,value=ascii_art)
-                c.font=_font(bold=False,color=C_UNIFIED_FG,size=9,italic=True)
-                c.fill=_fill("0A1628")
-                c.alignment=Alignment(horizontal="left",vertical="center",wrap_text=True)
-                ws.row_dimensions[row].height=48
-                row+=1
-
-            # col headers
-            for ci,h in enumerate(["Metric","Benchmark","Actual","Rate"],1):
-                _cell(ws,row,ci,h,bold=True,fg=C_COL_HDR_FG,bg=C_COL_HDR_BG,size=10,h="center")
-            row+=1
-
-            ct=m.get("contacted",0); es=m.get("emails_sent",0)
-            def metric(name,actual,rate_str,is_good=None,indent=0,is_sub=False,bench_str=""):
-                nonlocal row
-                alt=(row%2==0)
-                bg=C_ALT if alt else C_WHITE
-                pad="    "*indent+name
-                bold=not is_sub
-                _cell(ws,row,1,pad,bold=bold,bg=bg,size=10)
-                _cell(ws,row,2,bench_str,bg=bg,size=10,h="center",italic=True,fg="888888")
-                _cell(ws,row,3,actual,  bold=bold,bg=bg,size=10,h="right")
-                rate_fg=C_GREEN if is_good is True else (C_RED if is_good is False else "555555")
-                _cell(ws,row,4,rate_str,bold=False,fg=rate_fg,bg=bg,size=10,h="right")
-                row+=1
-
-            def bstr(key):
-                bv=b_.get(key); return f"{bv*100:.0f}%" if bv is not None else ""
-            metric("Unique Leads Contacted",f"{ct:,}","—")
-            metric("Emails Sent",            f"{es:,}","—")
-            metric("Bounce",    f"{m['bounced']:,}",f"{m['bounce_rate']*100:.1f}%",
-                   good(m['bounce_rate'],'bounce_rate',hi=False),
-                   indent=1,is_sub=True,bench_str=bstr('bounce_rate'))
-            metric("Unsubscribed",f"{m['unsubscribed']:,}",f"{m['unsub_rate']*100:.1f}%",
-                   good(m['unsub_rate'],'unsubscribe_rate',hi=False),
-                   indent=1,is_sub=True,bench_str=bstr('unsubscribe_rate'))
-            # spacer
-            ws.append(["","","",""]); row+=1
-            metric("Total Replies (incl. auto)",f"{m['total_replies']:,}",f"{m['total_reply_rate']*100:.1f}%",
-                   good(m['total_reply_rate'],'reply_rate',hi=True),bench_str=bstr('reply_rate'))
-            metric("Human Replies",f"{m['replies']:,}",f"{m['reply_rate']*100:.1f}%",
-                   indent=1,is_sub=True)
-            metric("Auto-Replies (OOO)",f"{m['auto_replies']:,}","",
-                   indent=1,is_sub=True)
-            metric("Interested",f"{m['interested']:,}",f"{m['int_rate']*100:.1f}%",
-                   good(m['int_rate'],'positive_reply_rate',hi=True),
-                   indent=1,is_sub=True,bench_str=bstr('positive_reply_rate'))
-            metric("Negative",f"{m['negative']:,}","",indent=1,is_sub=True)
-            ws.append(["","","",""]); row+=1
-            metric("📅 Meetings Booked",f"{m['mtg_booked']:,}",f"{m['mtg_book_rate']*100:.1f}%",
-                   good(m['mtg_book_rate'],'meeting_book_rate',hi=True),bench_str=bstr('meeting_book_rate'))
-            metric("✅ Meetings Attended (API)",f"{m['mtg_completed']:,}",f"{m['mtg_att_rate']*100:.1f}%",
-                   good(m['mtg_att_rate'],'meeting_attend_rate',hi=True),
-                   indent=1,is_sub=True,bench_str=bstr('meeting_attend_rate'))
-            metric("🏆 Deals Closed",f"{m['closed']:,}","")
-            ws.append(["","","",""]); row+=1
-            metric("Follow Ups",f"{int(fu):,}",f"{fu/ct*100:.1f}%" if ct else "")
-            metric("💰 Sales ($)",f"${int(su):,}","")
-            ws.append(["","","",""]); row+=1
-            return row
-
-        def _write_steps(ws,row,label,steps):
-            rows_=[s for s in steps if s.get("sent",0)>0]
-            if not rows_: return row
-            _merge_header(ws,row,f"Step Breakdown — {label}",
-                         C_STEP_HDR_FG,C_STEP_HDR_BG,11,cols=7)
-            row+=1
-            for ci,h in enumerate(["Email","Variant","Sent","Replied","Reply%","Positive","Pos%"],1):
-                _cell(ws,row,ci,h,bold=True,fg=C_COL_HDR_FG,bg=C_COL_HDR_BG,size=10,h="center")
-            row+=1
-            for s in sorted(rows_,key=_step_key):
-                sent=s["sent"]; rep=s["unique_replies"]
-                pos=s.get("unique_opportunities",0) or 0
-                try: en=f"Email {int(s['step'])+1}"
-                except: en=str(s.get("step","?"))
-                vl=VARIANT_NAMES.get(str(s.get("variant") or ""),str(s.get("variant") or ""))
-                alt=(row%2==0); bg=C_ALT if alt else C_WHITE
-                rr=rep/sent if sent else 0
-                pr=pos/rep  if rep  else 0
-                r_good=good(rr,'reply_rate',hi=True)
-                p_good=good(pr,'positive_reply_rate',hi=True)
-                r_fg=C_GREEN if r_good else (C_RED if r_good is False else "000000")
-                p_fg=C_GREEN if p_good else (C_RED if p_good is False else "555555")
-                for ci_,v_ in enumerate([en,vl,f"{sent:,}",f"{rep:,}"],1):
-                    _cell(ws,row,ci_,v_,bg=bg,size=10)
-                _cell(ws,row,5,f"{rr*100:.1f}%",fg=r_fg,bg=bg,size=10,h="right")
-                _cell(ws,row,6,f"{pos:,}",      bg=bg,size=10,h="right")
-                _cell(ws,row,7,f"{pr*100:.1f}%" if rep else "—",fg=p_fg,bg=bg,size=10,h="right")
-                row+=1
-            ws.append(["","","","","","",""]); row+=1
-            return row
-
-        wb=Workbook()
-        # One sheet per campaign + one unified sheet
-        first=True
-        for camp_label, m_, steps_, is_u in _all_sections():
-            sname=("UNIFIED" if is_u else camp_label[:28].strip().replace("/","_").replace("\\","_"))
-            if first:
-                ws=wb.active; ws.title=sname; first=False
-            else:
-                ws=wb.create_sheet(title=sname)
-            ws.column_dimensions["A"].width=34
-            ws.column_dimensions["B"].width=12
-            ws.column_dimensions["C"].width=14
-            ws.column_dimensions["D"].width=12
-            ws.column_dimensions["E"].width=10
-            ws.column_dimensions["F"].width=10
-            ws.column_dimensions["G"].width=10
-            ws.freeze_panes="A3"
-            row=1
-            row=_write_metrics(ws,row,camp_label,m_,
-                               fu=follow_ups if is_u else 0,
-                               su=sales_usd  if is_u else 0,
-                               is_unified=is_u)
-            row=_write_steps(ws,row,camp_label,steps_)
-
-            # No separate corrected block needed — unified dict is already patched
-            # with deduped numbers before this Excel write happens
-
-        # ── Leads Audit sheet ─────────────────────────────────────────────────
-        ws_audit=wb.create_sheet(title="LEADS AUDIT")
-        ws_audit.column_dimensions["A"].width=34
-        ws_audit.column_dimensions["B"].width=20
-        ws_audit.column_dimensions["C"].width=20
-        ws_audit.column_dimensions["D"].width=12
-        ws_audit.column_dimensions["E"].width=20
-        ws_audit.column_dimensions["F"].width=42
-        ws_audit.column_dimensions["G"].width=10
-
-        ws_audit.merge_cells(start_row=1,start_column=1,end_row=1,end_column=7)
-        ah=ws_audit.cell(row=1,column=1,
-            value=f"POSITIVE LEADS AUDIT  ·  {client_meta['name']}  ·  {dr_pretty}")
-        ah.font=_font(bold=True,color="FFD700",size=13)
-        ah.fill=_fill("4A0080"); ah.alignment=_align(h="center"); ah.border=BORDER
-
-        ws_audit.merge_cells(start_row=2,start_column=1,end_row=2,end_column=7)
-        sh=ws_audit.cell(row=2,column=1,
-            value=f"{'⚠  '+str(len(dupes))+' duplicate email(s) found!' if dupes else '✓ No duplicates found'}  |  "
-                  f"{'First Reply timestamps from emails API' if fetch_timestamps else 'First Reply: not fetched (>'+str(MAX_EMAIL_FETCHES)+' leads)'}")
-        sh.font=_font(bold=True,color="FFFFFF" if not dupes else "FF4444",size=11)
-        sh.fill=_fill("2D0050" if not dupes else "5C0000")
-        sh.alignment=_align(h="center"); sh.border=BORDER
-
-        for ci_,h_ in enumerate(["Email","Status","First Reply","Reply Type","CRM Updated","Campaign","Dupe?"],1):
-            _cell(ws_audit,3,ci_,h_,bold=True,fg=C_COL_HDR_FG,bg=C_COL_HDR_BG,size=10,h="center")
-
-        audit_row=4
-        STATUS_COLORS_XL={
-            "Interested":      ("1B5E20","E8F5E9"),
-            "Meeting Booked":  ("E65100","FFF3E0"),
-            "Meeting Completed":("0D47A1","E3F2FD"),
-            "Won/Closed":      ("4A148C","F3E5F5"),
-        }
-        for email_,entries_ in sorted(email_appearances.items()):
-            for occ in entries_:
-                is_dupe=email_ in dupes
-                fg_s,bg_s=STATUS_COLORS_XL.get(occ["status"],("000000","FFFFFF"))
-                row_bg="FFE8E8" if is_dupe else ("F0F4FF" if audit_row%2==0 else "FFFFFF")
-                _cell(ws_audit,audit_row,1,email_,    bg=row_bg,size=10,bold=is_dupe)
-                _cell(ws_audit,audit_row,2,occ["status"],fg=fg_s,bg=bg_s,size=10,bold=True,h="center")
-                _cell(ws_audit,audit_row,3,occ["ts_reply"],bg=row_bg,size=9,h="center")
-                rt_color="888888" if occ["reply_type"]=="—" else ("CC0000" if "Auto" in occ["reply_type"] else "1B5E20")
-                _cell(ws_audit,audit_row,4,occ["reply_type"],fg=rt_color,bg=row_bg,size=9,h="center")
-                _cell(ws_audit,audit_row,5,occ["ts_crm"],bg=row_bg,size=9,h="center")
-                _cell(ws_audit,audit_row,6,occ["campaign"],bg=row_bg,size=9)
-                _cell(ws_audit,audit_row,7,"⚠ DUPE" if is_dupe else "",
-                      fg="FFFFFF" if is_dupe else "888888",
-                      bg="CC0000" if is_dupe else row_bg,
-                      bold=is_dupe,size=10,h="center")
-                audit_row+=1
-
-        ws_audit.freeze_panes="A4"
-
-        out_path=Path.home()/"Downloads"/f"analytics_{client_meta['name']}_{tag}.xlsx"
-        wb.save(str(out_path))
-        console.print(f"[green]✓[/] Excel saved → [yellow]{out_path}[/]")
+        xbytes=analytics_workbook_to_bytes(export_ctx,client_meta,dr_pretty)
+        if not xbytes:
+            console.print("[red]Could not build Excel (openpyxl missing).[/]")
+        else:
+            out_path=Path.home()/"Downloads"/f"analytics_{client_meta['name']}_{tag}.xlsx"
+            out_path.write_bytes(xbytes)
+            console.print(f"[green]✓[/] Excel saved → [yellow]{out_path}[/]")
 
     elif "CSV" in fmt_pick:
         out_path=Path.home()/"Downloads"/f"analytics_{client_meta['name']}_{tag}.csv"
-        rows_out=[]
-        def csv_block(label:str, m:dict, fu:float=0, su:float=0):
-            ct=m.get("contacted",0)
-            rows_out.append([label,"","",""])
-            rows_out.append(["Metric","Benchmark","Actual","Rate"])
-            rows_out.append(["Unique Leads Contacted","",ct,""])
-            rows_out.append(["Emails Sent","",m["emails_sent"],""])
-            rows_out.append(["Bounce",         bstr2('bounce_rate'),    m["bounced"],    f"{m['bounce_rate']*100:.2f}%"])
-            rows_out.append(["Unsubscribed",    bstr2('unsubscribe_rate'),m["unsubscribed"],f"{m['unsub_rate']*100:.2f}%"])
-            rows_out.append(["","","",""])
-            rows_out.append(["Total Replies",   bstr2('reply_rate'),    m["total_replies"],f"{m['total_reply_rate']*100:.2f}%"])
-            rows_out.append(["  Human Replies","",m["replies"],          f"{m['reply_rate']*100:.2f}%"])
-            rows_out.append(["  Auto-Replies",  "",m["auto_replies"],    ""])
-            rows_out.append(["  Interested",    bstr2('positive_reply_rate'),m["interested"],f"{m['int_rate']*100:.2f}%"])
-            rows_out.append(["  Negative",      "",m["negative"],        ""])
-            rows_out.append(["","","",""])
-            rows_out.append(["Meetings Booked", bstr2('meeting_book_rate'),m["mtg_booked"],f"{m['mtg_book_rate']*100:.2f}%"])
-            rows_out.append(["Meetings Attended","",m["mtg_completed"],  f"{m['mtg_att_rate']*100:.2f}%"])
-            rows_out.append(["Deals Closed",    "",m["closed"],          ""])
-            rows_out.append(["Follow Ups",      "",int(fu),              f"{fu/ct*100:.2f}%" if ct else ""])
-            rows_out.append(["Sales ($)",       "",f"${int(su)}",        ""])
-            rows_out.append(["","","",""])
-        def bstr2(key):
-            bv=b_.get(key); return f"{bv*100:.0f}%" if bv is not None else ""
-        def csv_steps2(label:str, steps:list):
-            rows_=[s for s in steps if s.get("sent",0)>0]
-            if not rows_: return
-            rows_out.append([f"Steps: {label}","","","","","",""])
-            rows_out.append(["Email","Variant","Sent","Replied","Reply%","Positive","Pos%"])
-            for s in sorted(rows_,key=_step_key):
-                sent=s["sent"]; rep=s["unique_replies"]
-                pos=s.get("unique_opportunities",0) or 0
-                try: en=f"Email {int(s['step'])+1}"
-                except: en=str(s.get("step","?"))
-                vl=VARIANT_NAMES.get(str(s.get("variant") or ""),str(s.get("variant") or ""))
-                rows_out.append([en,vl,sent,rep,
-                    f"{rep/sent*100:.2f}%" if sent else "",pos,
-                    f"{pos/rep*100:.2f}%" if rep else ""])
-            rows_out.append(["","","","","","",""])
-        for camp_label,m_,steps_,is_u in _all_sections():
-            csv_block(camp_label,m_,fu=follow_ups if is_u else 0,su=sales_usd if is_u else 0)
-            csv_steps2(camp_label,steps_)
-        # Leads audit section
-        rows_out.append(["POSITIVE LEADS AUDIT","","","","","",""])
-        rows_out.append([
-            f"{'⚠ '+str(len(dupes))+' duplicates' if dupes else 'No duplicates'}",
-            f"{'First Reply fetched via emails API' if fetch_timestamps else 'First Reply: not fetched (>'+str(MAX_EMAIL_FETCHES)+' leads)'}",
-            "","","","",""])
-        rows_out.append(["Email","Status","First Reply","Reply Type","CRM Updated","Campaign","Dupe?"])
-        for em_,entries_ in sorted(email_appearances.items()):
-            for occ in entries_:
-                rows_out.append([em_,occ["status"],occ["ts_reply"],occ["reply_type"],
-                                  occ["ts_crm"],occ["campaign"],
-                                  "DUPE" if em_ in dupes else ""])
-        rows_out.append(["","","","","","",""])
-
-        import csv as _csv
-        with open(out_path,"w",newline="",encoding="utf-8") as f:
-            _csv.writer(f).writerows(rows_out)
+        csv_bytes=analytics_csv_to_bytes(export_ctx,client_meta,dr_pretty)
+        out_path.write_bytes(csv_bytes)
         console.print(f"[green]✓[/] CSV saved → [yellow]{out_path}[/]")
 
     # Save date prefs to profile (not campaign IDs — auto-selection handles that)
