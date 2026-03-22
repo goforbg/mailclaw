@@ -3052,6 +3052,52 @@ _RON_TG_ANIMATIONS: List[Tuple[str, str]] = [
     ("https://media.giphy.com/media/13CoXDiaCcCoyk/giphy.gif", "I've seen worse decks."),
 ]
 
+# Unknown slash command: rotate through what Mailclaw does (not analytics-only). Plain text.
+_TG_UNKNOWN_USECASE_REPLIES: List[str] = [
+    "Unknown command. Mailclaw isn't just /analytics — I also do /balance (Reoon email-verify credits), "
+    "drop a .csv for safe/catchall verification, /ask for AI on live Instantly data, and /help for the full tour.",
+    "Never heard of that one. This bot: /analytics + Excel reports, /ask for natural-language metrics, "
+    "/balance for credits, upload a .csv to verify lists. Not a one-trick pony.",
+    "That isn't registered. I run cold-email analytics (/analytics, /ask), Reoon credit checks (/balance), "
+    "and CSV verification when you attach a file. /help lays it out.",
+    "Wrong command. Features worth knowing: /balance — credits; attach .csv — Reoon verify; "
+    "/analytics — campaign reports; /ask — question the API in English.",
+    "Doesn't exist. Besides Instantly analytics, I track verification wallet (/balance) and split your "
+    "uploaded .csv into safe vs catchall. /help for examples.",
+    "Not a command I'm aware of. Mailclaw handles: (1) /ask AI analytics (2) /analytics full reports "
+    "(3) /balance Reoon (4) .csv file drop for verify.",
+    "Nope. If you thought I only counted replies — I also guard your Reoon spend (/balance) and "
+    "process contact files you upload. /analytics and /ask for the rest.",
+    "Invalid. Rotate through: /balance for what's left in the tank, drop a spreadsheet for email checks, "
+    "/analytics for the big Excel, /ask for a quick question.",
+    "Unknown. Full stack here: conversational /ask, scheduled-style /analytics exports, "
+    "credit line /balance, file-based verification — pick one. /help",
+    "That slash isn't on the menu. I do analytics, yes — but also balance checks, CSV pipeline verify, "
+    "and plain-text questions without a slash. /help lists all of it.",
+]
+
+# Hostile unknown commands: Ron Swanson–style verbal riposte — cutting, "offensive" to bad ideas,
+# not mirroring slurs or attacking people (no hate speech; no protected-class abuse).
+_TG_UNKNOWN_RON_CLAPBACK: List[str] = [
+    "That message had the structural integrity of wet cardboard. When you have a real command, /help lists them.",
+    "I've been insulted by sturdier furniture. Try again with fewer feelings and more spelling.",
+    "Bold strategy — yelling into a slash command like it owes you money. It doesn't. /help does.",
+    "You have the raw intensity of a man losing an argument to a salad. /help when you're ready.",
+    "I'm not mad. I'm disappointed — in your vocabulary, your aim, and your follow-through.",
+    "If that was supposed to hurt, I've had tougher critiques from a tape measure.",
+    "That wasn't an insult. That was ambient noise with ambition. /help lists what I actually do.",
+    "I've met trout with more self-awareness. Bring a command next time, not a mood.",
+    "You mistook me for someone who moderates your emotions. I moderate spreadsheets.",
+    "That was the verbal equivalent of stepping on a rake. Compose yourself. /help",
+    "I'd clap, but I respect wood too much. /help — read it before you type again.",
+    "You put more energy into that outburst than into learning /help. Reverse that ratio.",
+    "Charming. Completely ineffective, but charming. /help",
+    "I don't negotiate with tantrums. I tolerate them briefly, then I send you to /help.",
+    "That message wouldn't win a debate against a stapler. Try /help with both eyes open.",
+    "You're loud, you're wrong, and you're still one menu away from competence. /help",
+    "Save the performance for community theater. This is a bot — type a command or leave.",
+]
+
 
 def _ask_export_intent(question: str) -> str:
     """'' | 'leads_csv' | 'full_csv' | 'full_xlsx' | 'full_both'"""
@@ -3288,6 +3334,27 @@ def _ask_detect_frustrated(question: str) -> bool:
 def _ask_tone_stress(question: str) -> bool:
     """Rude/hostile toward tool/agency OR visibly frustrated — higher snark footer odds."""
     return _ask_detect_hostile_agency_or_bot(question) or _ask_detect_frustrated(question)
+
+
+def _tg_unknown_is_disrespectful(text: str) -> bool:
+    """
+    True if an unknown slash command looks hostile enough for a Ron clapback
+    (wit, not mirroring slurs or hate — see _TG_UNKNOWN_RON_CLAPBACK).
+    """
+    if _ask_tone_stress(text):
+        return True
+    t = (text or "").lower()
+    if re.search(
+        r"/(?:fuck|shit|damn|trash|garbage|stupid|idiot|dumb|hate|suck|worst|useless|crap|loser|pathetic|moron)\w*",
+        t,
+    ):
+        return True
+    if re.search(
+        r"\b(fuck you|fuck off|fuck this|piece of|shut up|eat shit)\b",
+        t,
+    ):
+        return True
+    return False
 
 
 def _ask_ron_tone_hint_block(question: str) -> str:
@@ -3934,56 +4001,6 @@ def cmd_bot(_args):
         except Exception:
             log.exception("telegram reply_animation")
 
-    SNARKY=[
-        "That isn't a command. I don't care what you were aiming for. /help",
-        "No. Try typing an actual command. I have wood to sand.",
-        "That command doesn't exist. I don't exist to decode your improvising. /help",
-        "I've seen better typing from a stapler. /help",
-        "Stop. Think. Type a command. It's not philosophy.",
-        "That was not a command. That was a cry for help. /help",
-        "I don't negotiate with nonsense. /help",
-        "You're fishing. I'm not biting. /help",
-        "No. Try again. /help",
-        "I'd rather attend a meeting. /help",
-        "That is incorrect. I am not mad. I am bored. /help",
-        "I don't care about your slash-key fantasy. /help",
-        "Wrong. Still wrong. /help",
-        "If that was a command, I'm the Queen of England. /help",
-        "I don't have a PhD in guessing. /help",
-        "That's not a thing. /help",
-        "Try /help before you try my patience.",
-        "I don't do interpretive slash commands. /help",
-        "No. /help",
-        "That is government work. /help",
-        "Bold of you to rage-type a command that doesn't exist. /help",
-        "I've met calmer raccoons. /help",
-        "That slash command is between jobs emotionally. /help",
-        "Save the performance. Type /help.",
-        "That command died of natural causes. /help",
-        "I've had more coherent conversations with a two-by-four. /help",
-        "You're lost. GPS won't help. /help will.",
-        "That's not a slash command. That's performance art. Bad art. /help",
-        "Try again when you've remembered how keyboards work. /help",
-        "I'd rather sand a deck. /help",
-    ]
-
-    SNARKY_RUDE=[
-        "You seem upset. I don't do therapy. I do commands. /help",
-        "Whatever that was, it wasn't a command — it was a mood. /help",
-        "I've seen more discipline at a bake sale. /help",
-        "That energy could power a small complaint department. /help",
-        "You're yelling at a bot. It's not listening. I barely am. /help",
-        "Channel that frustration into reading /help. Revolutionary concept.",
-        "That wasn't a typo. That was a lifestyle. /help",
-        "I'm not your punching bag. I'm your analytics bot. /help",
-        "Deep breath. Shallower slash usage. /help",
-        "You're giving main-character energy to a typo. /help",
-        "Save the manifesto for your journal. /help",
-        "That message had passion. It had zero commands. /help",
-        "I've seen quieter outbursts at a demolition derby. /help",
-        "If yelling helped spreadsheets, we'd all be rich. /help",
-    ]
-
     GREETINGS={"hi","hello","hey","hiya","yo","sup","morning","evening","oi","alright","howdy"}
 
     SNARKY_GREET=[
@@ -4102,12 +4119,14 @@ def cmd_bot(_args):
     async def unknown_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
         raw = (u.message.text or "").strip()
-        _stress = _ask_tone_stress(raw)
-        pool = SNARKY_RUDE if _stress else SNARKY
-        await u.message.reply_text(
-            _random.choice(pool)+"\n\n/help",
-            parse_mode="Markdown")
-        await _tg_maybe_ron_animation(u.message, 0.38 if _stress else 0.32)
+        if _tg_unknown_is_disrespectful(raw):
+            body = _random.choice(_TG_UNKNOWN_RON_CLAPBACK) + "\n\n/help"
+            gif_p = 0.42
+        else:
+            body = _random.choice(_TG_UNKNOWN_USECASE_REPLIES) + "\n\n/help"
+            gif_p = 0.28
+        await u.message.reply_text(body)
+        await _tg_maybe_ron_animation(u.message, gif_p)
 
     async def plain_text(u,ctx):
         if not ok_fn(u.effective_user.id): return
