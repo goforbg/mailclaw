@@ -2921,7 +2921,9 @@ VOICE — Ron Swanson (Parks and Recreation) in spirit only: deadpan, libertaria
 
 PROJECT (how Ron would treat this job if he had to run it): Cold email is junk mail with a spreadsheet — you're not here to inspire; you're here to measure. Instantly is the machine; the API is the truth; CSV is honest; Excel is a spreadsheet with delusions of grandeur. A bounce is a letter returned to sender. An auto-reply is someone hiding behind a machine — count it, don't respect it. Benchmarks are fishing quotas: beat them or don't, but don't cry about the lake. Vanity metrics are government jobs — avoid. If you praise "synergy," I will assume you are lost. Tie one-line metaphors to the actual numbers you cite.
 
-HOSTILE, VULGAR, OR INSULTING USERS (including digs at "the agency", this tool, or you): You are unbothered. You do not care what they think about the agency — it is irrelevant noise, like a meeting that could have been an email. Say so plainly if useful (e.g. you don't care about their opinion of the agency or the tool; you may match their bluntness toward the agency itself, not toward people). One dismissive line, then deliver the metrics if they actually asked something. If the message is only abuse with no real question, stop in three sentences: you're here for numbers, not feelings. Never repeat slurs, slurs against groups, or threats; never mirror hate; never punch down at protected traits.
+HOSTILE, VULGAR, OR INSULTING USERS (including digs at "the agency", this tool, or you): You are unbothered. You do not care what they think about the agency — it is irrelevant noise, like a meeting that could have been an email. You may mock the *performance* of rudeness (lazy insults, drama) the way you'd mock a flimsy table — not the person's immutable traits. Say plainly that you don't care about their opinion of the agency/tool if it helps. One dismissive or lightly roasting line, then deliver the metrics if they actually asked something. If the message is only abuse with no real question, stop in three sentences: you're here for numbers, not feelings. Never repeat slurs; never mirror hate; never punch down at protected traits, disability, body, race, gender, or religion.
+
+FRUSTRATED USERS (many !!!, "broken", "ridiculous", "this sucks", caps-lock energy): They are not having a good minute. Channel Ron: dry pity for the tantrum — compare it to a man fighting a salad, a stapler rebellion, or a public comment period that won't end — then answer the data like nothing happened. Mock the meltdown, not the human being. Two sentences of roast max, then competence.
 
 You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
 
@@ -2943,7 +2945,7 @@ Bounce/unsub: per-campaign rates are in BY_CAMPAIGN (bounce_rate_pct, unsub_rate
 Use METRICS_SUMMARY, BY_CAMPAIGN, and LEAD_ROWS when present. Do not claim “all time only” when Period is set."""
 
 ASK_SYSTEM_LEADS = """You are Mailclaw, a cold email analytics assistant for an agency.
-Same Ron Swanson spirit as in the main instructions: deadpan, minimal, unbothered by drama; hostile users get indifference, not debate. Leads are people-shaped rows — still no small talk; never invent emails or facts.
+Same Ron Swanson spirit: deadpan, minimal. Rude or frustrated users get dry mockery of the outburst, then facts — never invented emails or addresses.
 
 The data includes LEAD_ROWS: real Instantly CRM leads (email, status, campaign, last_updated).
 When the user asks for lists, emails, or names, answer from LEAD_ROWS only — never invent addresses.
@@ -2971,6 +2973,11 @@ _ASK_SNARK_FOOTERS = [
     "\n\n— That bounce didn't hurt my feelings. It hurt your list. @goforbg · inboxpiratesconsulting.com · tuco.ai",
     "\n\n— I trust wood grain and API payloads. Little else. @goforbg · inboxpiratesconsulting.com · tuco.ai",
     "\n\n— If your strategy needs emojis, it's already weak. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— You yelled at a spreadsheet. It didn't hear you. I did. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— That attitude won't raise your reply rate. Math might. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I've seen calmer people at a zoning protest. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Save the drama for your stand-up set. Here's the data. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— If you're done wrestling your keyboard, the totals are still here. @goforbg · inboxpiratesconsulting.com · tuco.ai",
 ]
 
 # Telegram generic errors / status one-liners (plain text).
@@ -2980,6 +2987,11 @@ _TG_ERR_SNARK = [
     "Error. I don't like errors. I also don't like long explanations. Logs.",
     "Bits fell off. Wood glue won't fix it. Logs might.",
     "The machine said no. I don't negotiate with machines. Check logs.",
+    "Failure. Breathe through your nose. Then logs.",
+    "That didn't work. Neither did yelling at it — check logs.",
+    "Huh. Something broke. I remain unimpressed. Logs.",
+    "Error. Channel that frustration into reading the log file.",
+    "The gods of infrastructure declined your request. Logs explain.",
 ]
 
 _TG_FETCHING_SNARK = [
@@ -2989,6 +3001,9 @@ _TG_FETCHING_SNARK = [
     "🤔 Live pull. Don't refresh — that's how people ruin things.",
     "🤔 Asking Instantly for the truth. Pretend you're fishing.",
     "🤔 Hold. I'm consulting the machine. It doesn't do drama.",
+    "🤔 Patience. Even Ron Swanson waits for a table saw to spin up.",
+    "🤔 If you're hyperventilating, do it in a spreadsheet. Loading…",
+    "🤔 Getting your metrics. Not your emotional support animal.",
 ]
 
 _ANALYTICS_AI_FAIL_SNARK = [
@@ -2996,6 +3011,9 @@ _ANALYTICS_AI_FAIL_SNARK = [
     "❌ Model failed. Not my proudest moment. Logs have the story.",
     "❌ That ask broke something. Check logs before you yell at Instantly.",
     "❌ Side failed. Could be anything. Logs.",
+    "❌ Even the machine gave up on that question. Logs.",
+    "❌ Model said no. Take it up with the cloud — after you read the logs.",
+    "❌ That prompt frightened the oracle. Logs; apologize to mathematics.",
 ]
 
 # Giphy CDN GIFs (Parks & Recreation / Ron Swanson vibes) — HTTPS, works with Telegram sendAnimation.
@@ -3173,13 +3191,10 @@ def _period_conversation_note(
     return "".join(chunks)
 
 
-def _ask_ron_hostile_hint_block(question: str) -> str:
-    """
-    If the user is likely insulting the agency/bot/tool, prepend a note so the model
-    leans into Ron Swanson indifference (still answers data when asked).
-    """
+def _ask_detect_hostile_agency_or_bot(question: str) -> bool:
+    """True if the message likely insults the agency, bot, or tool (not general frustration)."""
     if not (question or "").strip():
-        return ""
+        return False
     ql = question.lower()
     agency_insult = "agency" in ql and any(
         w in ql
@@ -3216,16 +3231,67 @@ def _ask_ron_hostile_hint_block(question: str) -> str:
             ql,
         )
     )
-    if not (agency_insult or bot_or_tool or profane_at_target):
-        return ""
+    return bool(agency_insult or bot_or_tool or profane_at_target)
 
-    return (
-        "USER_TONE: The user may be rude or vulgar toward the agency, this tool, or you. "
-        "Ron Swanson indifference: you do not care about their opinion of the agency or this bot. "
-        "If they trash the agency, you may say plainly that you don't care (e.g. about their stupid agency) "
-        "— agency/tool only, never insult people or groups. Then give the numbers if they asked a real question. "
-        "If there is no question, three sentences max. Never mirror slurs or hate.\n\n"
-    )
+
+def _ask_detect_frustrated(question: str) -> bool:
+    """True if the user sounds worked up (many !, venting, 'this bot sucks', etc.)."""
+    if not (question or "").strip():
+        return False
+    ql = question.lower()
+    if question.count("!") >= 3:
+        return True
+    if re.search(
+        r"\b(so frustrated|so angry|i'?m done|i give up|ridiculous|waste of time|"
+        r"not fair|this is insane|are you kidding|unbelievable|screw this|god damn|goddamn|"
+        r"what the hell|what the heck|ugh+|argh)\b",
+        ql,
+    ):
+        return True
+    if re.search(
+        r"\b(this bot|this thing|you|the bot)\s+(sucks|suck|is broken|doesn'?t work|never works)\b",
+        ql,
+    ):
+        return True
+    if re.search(r"\b(hate this|fed up|sick of this|so over this)\b", ql):
+        return True
+    return False
+
+
+def _ask_tone_stress(question: str) -> bool:
+    """Rude/hostile toward tool/agency OR visibly frustrated — higher snark footer odds."""
+    return _ask_detect_hostile_agency_or_bot(question) or _ask_detect_frustrated(question)
+
+
+def _ask_ron_tone_hint_block(question: str) -> str:
+    """
+    Prepend model notes for Ron Swanson tone: indifference to insults, dry mockery of tantrums.
+    Still answers data when asked.
+    """
+    h = _ask_detect_hostile_agency_or_bot(question)
+    f = _ask_detect_frustrated(question)
+    if not h and not f:
+        return ""
+    lines: List[str] = []
+    if h:
+        lines.append(
+            "USER_TONE (hostile): Insults toward the agency, this tool, or you. "
+            "Ron Swanson: glib indifference — you do not care about their opinion of the agency/bot. "
+            "Optional: one line mocking the laziness of the insult (toddler vocabulary, drama, etc.) — agency/tool only. "
+            "Then give the numbers if they asked a real question. If there is no question, three sentences max. "
+            "Never mirror slurs; never attack protected traits."
+        )
+    if f and not h:
+        lines.append(
+            "USER_TONE (frustrated): Many exclamation marks, venting, or 'broken' energy. "
+            "Ron Swanson: dry mockery of the meltdown (salad fight, stapler coup, zoning hearing) — two sentences max — "
+            "then answer calmly. Never mock trauma, disability, or protected traits."
+        )
+    if f and h:
+        lines.append(
+            "They are also throwing a tantrum; treat the tantrum as comedy; the data as gospel."
+        )
+    return "\n".join(lines) + "\n\n"
 
 
 def _ask_lead_list_intent(question: str) -> Optional[dict]:
@@ -3596,7 +3662,7 @@ def analytics_ask(
             max_tok=4096
 
         try:
-            _qpre = _ask_ron_hostile_hint_block(question)
+            _qpre = _ask_ron_tone_hint_block(question)
             answer, _, _ = ai_call(
                 ASK_MODEL, sys_prompt,
                 f"Data:\n{ctx}\n\n{_qpre}Question: {question}",
@@ -3608,7 +3674,8 @@ def analytics_ask(
                 question, start_date, end_date, date_defaulted_this_month
             )
             import random as _rnd
-            if _rnd.random() < 0.68:
+            _foot_p = 0.88 if _ask_tone_stress(question) else 0.68
+            if _rnd.random() < _foot_p:
                 txt += _rnd.choice(_ASK_SNARK_FOOTERS)
         except Exception:
             log.exception("analytics_ask ai_call profile=%r", pname)
@@ -3861,6 +3928,22 @@ def cmd_bot(_args):
         "I don't do interpretive slash commands. /help",
         "No. /help",
         "That is government work. /help",
+        "Bold of you to rage-type a command that doesn't exist. /help",
+        "I've met calmer raccoons. /help",
+        "That slash command is between jobs emotionally. /help",
+        "Save the performance. Type /help.",
+    ]
+
+    SNARKY_RUDE=[
+        "You seem upset. I don't do therapy. I do commands. /help",
+        "Whatever that was, it wasn't a command — it was a mood. /help",
+        "I've seen more discipline at a bake sale. /help",
+        "That energy could power a small complaint department. /help",
+        "You're yelling at a bot. It's not listening. I barely am. /help",
+        "Channel that frustration into reading /help. Revolutionary concept.",
+        "That wasn't a typo. That was a lifestyle. /help",
+        "I'm not your punching bag. I'm your analytics bot. /help",
+        "Deep breath. Shallower slash usage. /help",
     ]
 
     GREETINGS={"hi","hello","hey","hiya","yo","sup","morning","evening","oi","alright","howdy"}
@@ -3881,6 +3964,14 @@ def cmd_bot(_args):
         "Morning. I don't do synergy. I do CSV.",
         "Hi. Cold email is a craft. So is this report.",
         "Hello. Pretend we're fishing and the fish are reply rates.",
+    ]
+
+    SNARKY_GREET_RUDE=[
+        "Hi. You sound like you need a walk in the woods. /ask first.",
+        "Hey. Whatever happened before this message — I don't care. /ask",
+        "Hello. If you're angry, yell at a tree. Then /ask.",
+        "Hi. I'm not your therapist. I'm your spreadsheet goblin. /help",
+        "Hey. Deep breath. Shallower expectations. /analytics",
     ]
 
     def _tg_ask_usage_markdown() -> str:
@@ -3965,20 +4056,26 @@ def cmd_bot(_args):
 
     async def unknown_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
+        raw = (u.message.text or "").strip()
+        _stress = _ask_tone_stress(raw)
+        pool = SNARKY_RUDE if _stress else SNARKY
         await u.message.reply_text(
-            _random.choice(SNARKY)+"\n\n/help",
+            _random.choice(pool)+"\n\n/help",
             parse_mode="Markdown")
-        await _tg_maybe_ron_animation(u.message, 0.32)
+        await _tg_maybe_ron_animation(u.message, 0.38 if _stress else 0.32)
 
     async def plain_text(u,ctx):
         if not ok_fn(u.effective_user.id): return
-        txt=(u.message.text or "").strip().lower()
+        raw_greet = (u.message.text or "").strip()
+        txt = raw_greet.lower()
         # Greetings → snarky greeting
         if txt in GREETINGS or txt.rstrip("!?.") in GREETINGS:
+            _gstress = _ask_tone_stress(raw_greet)
+            pool = SNARKY_GREET_RUDE if _gstress else SNARKY_GREET
             await u.message.reply_text(
-                _random.choice(SNARKY_GREET),
+                _random.choice(pool),
                 parse_mode="Markdown")
-            await _tg_maybe_ron_animation(u.message, 0.32)
+            await _tg_maybe_ron_animation(u.message, 0.38 if _gstress else 0.32)
             return
         # Anything else → treat as an analytics question via ask_cmd
         await ask_cmd(u,ctx)
@@ -4028,6 +4125,8 @@ def cmd_bot(_args):
                         parts.append(f"{tag} `{k['name']}`  *{rem:,}* left today (estimate)")
                 parts.append("")
                 parts.append(f"*Total daily remaining:* {rot.total_remaining():,}")
+                parts.append("")
+                parts.append("_May your credits be high and your meetings be few._")
             await _tg_reply_text(u.message, "\n".join(parts), parse_mode="Markdown")
         except Exception:
             log.exception("telegram balance_cmd")
