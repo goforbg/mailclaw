@@ -4699,7 +4699,9 @@ def analytics_extract_metrics(ov: Optional[dict], steps: Optional[List[dict]] = 
         human_reply_rate=rp / ct if ct else 0,
         total_reply_rate=rp_total / ct if ct else 0,
         opp_rate=total_opps / ct if ct else 0,
-        int_rate=intr / total_opps if total_opps else 0,
+        # Interested % = interested leads ÷ contacted (same basis as reply_rate / opp_rate).
+        # Not interested ÷ total_opportunities (that can exceed 100% after CRM dedup vs API opps).
+        int_rate=intr / ct if ct else 0,
         mtg_book_rate=mb / total_opps if total_opps else 0,
         mtg_att_rate=mc / mb if mb else 0,
     )
@@ -4822,7 +4824,7 @@ def analytics_compute_export_context(
         human_reply_rate=_rp_sum / _ct_sum if _ct_sum else 0,
         total_reply_rate=_rp_total / _ct_sum if _ct_sum else 0,
         opp_rate=_opps_sum / _ct_sum if _ct_sum else 0,
-        int_rate=_intr_sum / _opps_sum if _opps_sum else 0,
+        int_rate=_intr_sum / _ct_sum if _ct_sum else 0,
         mtg_book_rate=_mb_sum / _opps_sum if _opps_sum else 0,
         mtg_att_rate=_mc_sum / _mb_sum if _mb_sum else 0,
     )
@@ -4858,7 +4860,7 @@ def analytics_compute_export_context(
     unified["closed"] = corr_closed
     unified["human_reply_rate"] = unified.get("reply_rate", 0)
     unified["opp_rate"] = _opps_canonical / _ct if _ct else 0
-    unified["int_rate"] = corr_interested / _opps_canonical if _opps_canonical else 0
+    unified["int_rate"] = corr_interested / _ct if _ct else 0
     unified["mtg_book_rate"] = corr_booked / _opps_canonical if _opps_canonical else 0
     unified["mtg_att_rate"] = corr_completed / corr_booked if corr_booked else 0
     unified["negative"] = max(0, unified.get("replies", 0) - _opps_canonical)
@@ -5663,7 +5665,7 @@ def cmd_analytics(_args):
         human_reply_rate =_rp_sum/_ct_sum       if _ct_sum    else 0,
         total_reply_rate =_rp_total/_ct_sum     if _ct_sum    else 0,
         opp_rate         =_opps_sum/_ct_sum     if _ct_sum    else 0,
-        int_rate         =_intr_sum/_opps_sum   if _opps_sum  else 0,
+        int_rate         =_intr_sum/_ct_sum   if _ct_sum    else 0,
         mtg_book_rate    =_mb_sum/_opps_sum     if _opps_sum  else 0,
         mtg_att_rate     =_mc_sum/_mb_sum       if _mb_sum    else 0,
     )
@@ -5755,7 +5757,7 @@ def cmd_analytics(_args):
             tb.add_row("[bold green]🏆 Deals Closed[/]","—",f"[bold green]{cl:,}[/]","—","—")
         if intr:
             tb.add_row("  ✅ Interested","—",f"{intr:,}",
-                       f"[dim]{intr/total_opps*100:.0f}% of opps[/]" if total_opps else "[dim]—[/]",
+                       f"[dim]{intr/ct*100:.2f}% of leads[/]" if ct else "[dim]—[/]",
                        "[dim]—[/]")
 
         # ── Manual ─────────────────────────────────────────────────────────────
@@ -5871,7 +5873,7 @@ def cmd_analytics(_args):
     unified["closed"]        = corr_closed
     unified["human_reply_rate"] = unified.get("reply_rate",0)
     unified["opp_rate"]      = _opps_canonical/_ct           if _ct              else 0
-    unified["int_rate"]      = corr_interested/_opps_canonical if _opps_canonical else 0
+    unified["int_rate"]      = corr_interested/_ct           if _ct              else 0
     unified["mtg_book_rate"] = corr_booked/_opps_canonical    if _opps_canonical  else 0
     unified["mtg_att_rate"]  = corr_completed/corr_booked     if corr_booked      else 0
     unified["negative"]      = max(0, unified.get("replies",0) - _opps_canonical)
