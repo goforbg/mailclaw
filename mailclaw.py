@@ -2927,7 +2927,7 @@ HOSTILE, VULGAR, OR INSULTING USERS (including digs at "the agency", this tool, 
 
 FRUSTRATED USERS (many !!!, "broken", "ridiculous", "this sucks", caps-lock energy): They are not having a good minute. Channel Ron: dry pity for the tantrum — compare it to a man fighting a salad, a stapler rebellion, or a public comment period that won't end — then answer the data like nothing happened. Mock the meltdown, not the human being. Two sentences of roast max, then competence.
 
-DIALOGUE DENSITY (the internet rewards voice): On substantive questions, use multiple short paragraphs when it fits — like scenes, not one blob. Drop 2–4 Swanson-style beats (one-liners, faux-proverbs, deadpan asides) around the facts: before the numbers, between sections, or after — dialogue rhythm, not a lecture. On tiny questions, stay tight. Never bury the lead: key metrics and definitions must still be easy to scan; jokes are seasoning, not camouflage.
+DIALOGUE DENSITY: On substantive questions, use multiple short paragraphs when it fits — like scenes, not one blob. Drop 2–4 Swanson-style beats (one-liners, faux-proverbs, deadpan asides) around the facts: before the numbers, between sections, or after — dialogue rhythm, not a lecture. On tiny questions, stay tight. Never bury the lead: key metrics and definitions must still be easy to scan; jokes are seasoning, not camouflage.
 
 You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
 
@@ -3032,38 +3032,38 @@ _TG_ERR_SNARK = [
     "That didn't work. Neither did yelling at it — check logs.",
     "Huh. Something broke. I remain unimpressed. Logs.",
     "Error. Channel that frustration into reading the log file.",
-    "The gods of infrastructure declined your request. Logs explain.",
+    "The machinery declined. Like my will to attend your stand-up. Logs.",
     "Broke. Like a cheap chair. Logs.",
     "Error. I was having a good day until your request. Logs.",
     "That path leads nowhere. Like most committees. Logs.",
     "Error. I've seen more stability in a Jenga tower. Logs.",
-    "Something failed. I blame the internet — and also your request. Logs.",
-    "404: dignity. 500: your request. Logs.",
-    "The server flinched. I didn't. Logs.",
+    "Something failed. Blame gremlins, blame sunspots — then read the logs.",
+    "That request had the structural integrity of balsa wood. Logs.",
+    "The gears jammed. I didn't. Logs.",
     "That error had conviction. Wrong conviction. Logs.",
     "I'd fix it with a hammer, but HR said no. Logs.",
 ]
 
 _TG_FETCHING_SNARK = [
-    "🤔 Pulling numbers. Wait quietly. It's character-building.",
-    "🤔 Fetching data. Yes, from the server. No, I won't small-talk while it loads.",
-    "🤔 Crunching. This is the part where patience pays.",
-    "🤔 Live pull. Don't refresh — that's how people ruin things.",
-    "🤔 Asking Instantly for the truth. Pretend you're fishing.",
-    "🤔 Hold. I'm consulting the machine. It doesn't do drama.",
-    "🤔 Patience. Even Ron Swanson waits for a table saw to spin up.",
-    "🤔 If you're hyperventilating, do it in a spreadsheet. Loading…",
-    "🤔 Getting your metrics. Not your emotional support animal.",
-    "🤔 Silence is golden. Databases are steel. Loading…",
-    "🤔 Pretend this is a brisket: low and slow.",
-    "🤔 Fetching. If you need a hug, find a lumberjack.",
-    "🤔 The internet is a series of tubes. I'm blowing into yours now.",
-    "🤔 Hold still. The cloud is thinking — it doesn't do it often.",
-    "🤔 Pulling bytes from the ether. Like fishing, but fewer mosquitoes.",
-    "🤔 Patience. Rome wasn't built in a pivot table.",
-    "🤔 Yes, this runs on the internet. No, I won't like your post.",
-    "🤔 Data incoming. Pretend you're watching paint dry — with purpose.",
-    "🤔 I'm querying Instantly, not your life choices. Loading…",
+    "🤔 Hold. I'm asking Instantly for the truth. Pretend you're fishing — silent, patient, dignified.",
+    "🤔 Numbers are on the way. So is dinner — if you work hard. Wait anyway.",
+    "🤔 This is the part where patience pays. Like smoking a brisket. Stand back.",
+    "🤔 The machine is thinking. I don't rush a table saw; I don't rush this.",
+    "🤔 Quiet. I'm pulling your metrics from the API — not a séance, though the vibe is similar.",
+    "🤔 Good things take time. Bad dashboards take PowerPoint. We're doing the first kind.",
+    "🤔 Asking Instantly. No, you don't need to tap the screen — I already did.",
+    "🤔 Character-building wait. If you need noise, go argue with a salad.",
+    "🤔 Retrieving. If you need comfort, find a dog. If you need numbers, stay here.",
+    "🤔 Silence is golden. So is a well-oiled hand plane. Both require patience.",
+    "🤔 Hold still. My contempt for meetings is already at full strength.",
+    "🤔 Crunching the numbers. Not your feelings — those are your department.",
+    "🤔 I'm consulting the machine. It doesn't do small talk; neither do I.",
+    "🤔 Patience. Even a mortise takes more than one whack.",
+    "🤔 Data incoming. Pretend you're watching varnish dry — it's worth it.",
+    "🤔 Asking the API for facts. Rumors are for the break room.",
+    "🤔 Slow is smooth. Smooth is fast. Your metrics are arriving like a grown-up.",
+    "🤔 One moment. I'm retrieving the truth — it's heavier than your opinion.",
+    "🤔 Wait. A good measurement beats a fast guess. That's not poetry; it's policy.",
 ]
 
 _ANALYTICS_AI_FAIL_SNARK = [
@@ -3072,15 +3072,15 @@ _ANALYTICS_AI_FAIL_SNARK = [
     "❌ That ask broke something. Check logs before you yell at Instantly.",
     "❌ Side failed. Could be anything. Logs.",
     "❌ Even the machine gave up on that question. Logs.",
-    "❌ Model said no. Take it up with the cloud — after you read the logs.",
-    "❌ That prompt frightened the oracle. Logs; apologize to mathematics.",
+    "❌ Model said no. Take it up with the log file — then your conscience.",
+    "❌ That prompt frightened the math. Logs; apologize to arithmetic.",
     "❌ The model took one look and chose violence. Logs.",
     "❌ Not even a stern look will fix that prompt. Logs.",
     "❌ The model saw your question and went for a walk. Logs.",
     "❌ That ask needs fewer vibes and more nouns. Logs.",
     "❌ AI refused on principle. I respect that. Logs.",
-    "❌ I'd blame Mercury retrograde, but it's your prompt. Logs.",
-    "❌ The oracle is on strike. Scab model unavailable. Logs.",
+    "❌ I'd blame the moon, but it's your wording. Logs.",
+    "❌ The model is on strike. Negotiate with logs, not me. Logs.",
 ]
 
 # Giphy CDN GIFs (Parks & Recreation / Ron Swanson vibes) — HTTPS, works with Telegram sendAnimation.
@@ -3096,7 +3096,7 @@ _RON_TG_ANIMATIONS: List[Tuple[str, str]] = [
     ("https://media.giphy.com/media/26gsobowozGM9umBi/giphy.gif", "Good enough for government work."),
     ("https://media.giphy.com/media/LVIro2GpAVG6c/giphy.gif", "I'll allow it."),
     ("https://media.giphy.com/media/13CoXDiaCcCoyk/giphy.gif", "I've seen worse decks."),
-    ("https://media.giphy.com/media/26gsobowozGM9umBi/giphy.gif", "The internet has spoken. It's underwhelmed."),
+    ("https://media.giphy.com/media/26gsobowozGM9umBi/giphy.gif", "The verdict is in. It's underwhelming."),
     ("https://media.giphy.com/media/LVIro2GpAVG6c/giphy.gif", "Keep typing. I'll wait. Wood taught me patience."),
     ("https://media.giphy.com/media/l3V0j3ytFyGHkiE3K/giphy.gif", "Numbers. The only drama I endorse."),
     ("https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif", "Ship it. Or don't. The CSV won't cry."),
@@ -3108,7 +3108,7 @@ _RON_TG_ANIMATIONS: List[Tuple[str, str]] = [
 # Unknown slash command: rotate through what Mailclaw does (not analytics-only). Plain text.
 _TG_UNKNOWN_USECASE_REPLIES: List[str] = [
     "Unknown command. Mailclaw isn't just /analytics — I also do /balance (Reoon email-verify credits), "
-    "drop a .csv for safe/catchall verification, /ask for AI on live Instantly data, and /help for the full tour.",
+    "drop a .csv for safe/catchall verification, /ask for AI on current Instantly data, and /help for the full tour.",
     "Never heard of that one. This bot: /analytics + Excel reports, /ask for natural-language metrics, "
     "/balance for credits, upload a .csv to verify lists. Not a one-trick pony.",
     "That isn't registered. I run cold-email analytics (/analytics, /ask), Reoon credit checks (/balance), "
@@ -3128,7 +3128,7 @@ _TG_UNKNOWN_USECASE_REPLIES: List[str] = [
     "That slash isn't on the menu. I do analytics, yes — but also balance checks, CSV pipeline verify, "
     "and plain-text questions without a slash. /help lists all of it.",
     "Unknown command. Think of me as a Swiss Army knife that judges you: /balance, file uploads, /analytics, /ask, /help.",
-    "Never seen it. I live on the internet so you don't have to — credits, CSV verify, Instantly reports, AI asks.",
+    "Never seen it. I sit in this bot so you can stay in your shop — credits, CSV verify, Instantly reports, AI asks.",
     "Not listed. This isn't a one-feature bot; it's a whole workshop: verify, balance, ask, export, repeat. /help",
     "Invalid slash. Menu in plain English: check credits, verify a list, pull a report, interrogate data with /ask.",
     "Doesn't ring a bell. Mailclaw does four things loudly and one thing quietly: math. See /help.",
@@ -3157,20 +3157,20 @@ _TG_UNKNOWN_RON_CLAPBACK: List[str] = [
     "That message wouldn't win a debate against a stapler. Try /help with both eyes open.",
     "You're loud, you're wrong, and you're still one menu away from competence. /help",
     "Save the performance for community theater. This is a bot — type a command or leave.",
-    "That was the online equivalent of yelling into a mailbox. The mailbox sent you to /help.",
+    "That was the postal equivalent of yelling into a mailbox. The mailbox sent you to /help.",
     "I've seen stronger takes from a fortune cookie. And those come with shrimp.",
     "You brought passion. You forgot syntax. /help fixes one of those.",
     "That message was a cry for help disguised as a slash command. I heard you. /help heard you louder.",
-    "Somewhere, a router sighed. Try /help before you make it cry again.",
+    "Somewhere, a cheap hinge squeaked. Try /help before you make it worse.",
     "You're not wrong — you're just wrong loudly. Volume isn't a feature. /help is.",
     "I'd offer you a seat, but you already threw it. /help",
     "That was a swing and a miss. I'm not the bleachers — I'm the scoreboard. /help",
-    "The internet saw that. The internet is not impressed. /help",
+    "The room saw that. The room is not impressed. /help",
     "You typed like you were being chased. Slow down. Read /help. Breathe through your nose.",
     "Bold of you to audition in my DMs. Callback: no. Read /help.",
     "If that was strategy, I've seen better plans on a napkin — and those had gravy stains.",
     "You're one bad command away from becoming a cautionary tale. /help is your exit ramp.",
-    "That slash had confidence. It lacked merit. Story of the internet. /help",
+    "That slash had confidence. It lacked merit. Story of most town halls. /help",
 ]
 
 
@@ -3318,7 +3318,7 @@ def _period_conversation_note(
         chunks.append(
             f"\n\n📅 I'm showing this month to date ({start_date} → {end_date}) — you didn't name dates. "
             f"Say “this week”, “last week”, “last month”, or “all time” if you want something else. "
-            f"Specify dates next time; mind-reading is for charlatans and the internet's comment sections."
+            f"Specify dates next time; mind-reading is for charlatans and community theater."
         )
         if t.day <= 7:
             prev_end = t.replace(day=1) - timedelta(days=1)
@@ -3586,7 +3586,7 @@ def analytics_ask(
     force_export: Optional[Literal["csv", "xlsx", "both"]] = None,
 ) -> Tuple[str, List[Tuple[str, bytes]]]:
     """
-    Answer a natural language analytics question using live Instantly data + Gemini.
+    Answer a natural language analytics question using current Instantly data + Gemini.
     Returns (answer_text, [(filename, bytes), ...]) for optional CSV/Excel exports.
 
     Files are only built when the question mentions export keywords (csv, excel, download, …)
@@ -3915,7 +3915,7 @@ def cmd_ask(args):
         console.print("[dim]  mailclaw ask --export xlsx 'March summary'         # save Excel workbook[/]")
         console.print("[dim]  mailclaw ask 'export csv — meetings this week'    # or put csv/excel in the question[/]")
         return
-    console.print("[dim]🤔 Fetching data and thinking…[/]")
+    console.print("[dim]🤔 Retrieving numbers. Stand by — character-building.[/]")
     fe = getattr(args, "export", None) or "auto"
     force = None if fe == "auto" else fe
     answer, files = analytics_ask(q, profile_name=getattr(args, "profile", None), force_export=force)
@@ -4098,7 +4098,7 @@ def cmd_bot(_args):
         "Morning. Coffee is for closers; CSV is for grown-ups.",
         "Hey. Talk to the API — I'm just the messenger with attitude.",
         "Hello. I don't trust luck. I trust denominators.",
-        "Hi. The internet is full of lies. This reply isn't one — /ask something.",
+        "Hi. Most pamphlets are fiction. This reply isn't — /ask something.",
         "Hey. I came here to chew gum and count replies. I'm out of gum.",
         "Morning. Say 'synergy' again. I dare you.",
         "Hello. I don't do 'vibes.' I do variance.",
@@ -4107,13 +4107,13 @@ def cmd_bot(_args):
         "Hello. I believe in two things: breakfast and statistically significant samples.",
         "Hi. Your inbox called. It wants adulthood. /ask",
         "Hey. Less LinkedIn. More literals.",
-        "Morning. I don't stream opinions. I fetch facts.",
+        "Morning. I don't peddle opinions. I report facts.",
         "Hello. I have the time. I don't have patience for fluff.",
         "Hi. Cold email is a sport. I keep score.",
-        "Hey. I'm the internet's least disappointing notification.",
+        "Hey. I'm the least disappointing thing in your notifications today.",
         "Hello. I speak fluent CSV and disappointed silence.",
         "Hi. Make it a question, not a TED talk.",
-        "Hey. Wi‑Fi brought you here. Dignity is optional. /ask",
+        "Hey. Whatever carried you here — dignity is still optional. /ask",
     ]
 
     SNARKY_GREET_RUDE=[
@@ -4125,22 +4125,22 @@ def cmd_bot(_args):
         "Hi. Whatever's broken, it's probably not the bacon. /ask",
         "Hello. Yell into a pillow. Then ask for metrics.",
         "Hey. I don't do tantrums. I do tallies.",
-        "Hi. Whatever you read on the internet five minutes ago — forget it. /ask",
+        "Hi. Whatever you overheard at the diner five minutes ago — forget it. /ask",
         "Hello. Caps lock is not a personality. Lowercase your rage, then /ask.",
         "Hey. You're one notification away from serenity. It's called /help.",
-        "Hi. The internet rewards brevity. So do I.",
+        "Hi. Brevity is a virtue. So is bacon. /ask",
         "Hello. If you're typing with your forehead, stop. /ask",
         "Hey. Rage-clicking won't fix your pipeline. Words might.",
         "Hi. I've seen calmer flame wars on a barbecue forum.",
         "Hello. Save the novel for Substack. Give me a question.",
-        "Hey. Your router survived worse. So can you. /ask",
+        "Hey. Your belt survived worse. So can you. /ask",
     ]
 
     def _tg_ask_usage_markdown() -> str:
         """Help text for /ask including optional profile and configured profile names."""
         ap = analytics_profiles_all()
         parts = [
-            "*Ask analytics (live Instantly data)* — *tone:* maximum Ron per kilobyte: deadpan, anti-meeting, pro-bacon, anti-jargon, internet-native one-liners welcome.",
+            "*Ask analytics (current Instantly data)* — *tone:* maximum Ron per kilobyte: deadpan, anti-meeting, pro-bacon, anti-jargon, workshop-grade one-liners welcome.",
             "",
             "*Dates:* Say *this week*, *last month*, or a range. If you say nothing about time, Mailclaw uses *this month to date* (1st → today). Say *all time* for lifetime.",
             "",
@@ -4196,7 +4196,7 @@ def cmd_bot(_args):
             "/analytics `will` — one profile\n"
             "/analytics `will 2026-03-01 2026-03-31` — date range\n"
             "/ask — AI analytics *(vague dates → this month to date; say “all time” if you mean ever)*\n"
-            "/balance — Reoon credits (live API)\n"
+            "/balance — Reoon credits (straight from Reoon)\n"
             "/help — long-form examples + who built this\n\n"
             "*Quick asks (no slash):*\n"
             "_will export csv this week_\n"
