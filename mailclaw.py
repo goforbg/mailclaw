@@ -28,10 +28,10 @@ REQUIRED ENV VARS (or set via config):
   REOON_API_KEY_1 ... REOON_API_KEY_N
   INSTANTLY_API_KEY
 
-CONFIG: ~/.mailclaw/config.json
+CONFIG: ~/.mailclaw/config.json (local CLI) — or env-only on Railway (see MAILCLAW_CONFIG_SOURCE)
 PROFILES: ~/.mailclaw/profiles/<name>.json
 STATE: ~/.mailclaw/state/<csv_hash>.json
-HISTORY: ~/.mailclaw/email_history.json
+HISTORY: ~/.mailclaw/email_history.json — or in-memory when MAILCLAW_CONFIG_SOURCE=env
 OUTPUT: same folder as input CSV, named:
   {stem}_email_verified_DD_mmm_YY.csv
   {stem}_ai_enriched_DD_mmm_YY.csv
@@ -73,6 +73,26 @@ CLIENTS_DIR  = APP_DIR / "clients"     # per-client overrides
 ANALYTICS_DIR= APP_DIR / "analytics"   # analytics report profiles
 for _d in [APP_DIR, STATE_DIR, PROFILES_DIR, CLIENTS_DIR, ANALYTICS_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
+
+def use_env_config() -> bool:
+    """
+    True → no config.json / email_history.json on disk; all settings from env vars.
+    Set explicitly with MAILCLAW_CONFIG_SOURCE=env or MAILCLAW_USE_ENV=1,
+    or implicitly when RAILWAY_ENVIRONMENT is set (Railway injects this).
+    Use MAILCLAW_CONFIG_SOURCE=file to force ~/.mailclaw JSON even on Railway (e.g. mounted volume).
+    """
+    if os.environ.get("MAILCLAW_CONFIG_SOURCE", "").lower() == "file":
+        return False
+    if os.environ.get("MAILCLAW_CONFIG_SOURCE", "").lower() == "env":
+        return True
+    if os.environ.get("MAILCLAW_USE_ENV") == "1":
+        return True
+    if os.environ.get("RAILWAY_ENVIRONMENT"):
+        return True
+    return False
+
+# In-memory email verification history when use_env_config() (ephemeral across restarts)
+_memory_history: Optional[dict] = None
 
 INSTANTLY_BASE = "https://api.instantly.ai/api/v2"
 REOON_BASE     = "https://emailverifier.reoon.com/api/v1"
@@ -136,6 +156,7 @@ DEFAULT_CONFIG = {
     "reoon_keys":             [],
     "instantly_clients":      [],
     "model_keys":             {"anthropic":"","gemini":"","openai":""},
+    "model_key_pools":        {},  # optional: provider -> [api_key, ...] for rotation
     "telegram_token":         "",
     "telegram_allowed_users": [],
     "daily_limit":            2000,
@@ -144,76 +165,205 @@ DEFAULT_CONFIG = {
     "default_profile":        "generic",
 }
 
+def _env_numbered_strings(base: str) -> List[str]:
+    """Read BASE, BASE_2, BASE_3, ... from the environment (non-empty values only)."""
+    out: List[str] = []
+    v = os.environ.get(base, "").strip()
+    if v:
+        out.append(v)
+    i = 2
+    while i <= 64:
+        v = os.environ.get(f"{base}_{i}", "").strip()
+        if not v:
+            break
+        out.append(v)
+        i += 1
+    return out
+
+def _apply_model_key_pools(c: dict) -> None:
+    """Merge multi-key env vars into model_key_pools and backfill model_keys when empty."""
+    c.setdefault("model_keys", {})
+    c.setdefault("model_key_pools", {})
+    pools = {
+        "gemini":    _env_numbered_strings("GEMINI_API_KEY") or _env_numbered_strings("GOOGLE_API_KEY"),
+        "anthropic": _env_numbered_strings("ANTHROPIC_API_KEY"),
+        "openai":    _env_numbered_strings("OPENAI_API_KEY"),
+    }
+    for prov, vals in pools.items():
+        if not vals:
+            continue
+        c["model_key_pools"][prov] = vals
+        if not c["model_keys"].get(prov):
+            c["model_keys"][prov] = vals[0]
+    for prov in ("gemini", "anthropic", "openai"):
+        mk = c["model_keys"].get(prov, "").strip()
+        if mk and prov not in c["model_key_pools"]:
+            c["model_key_pools"][prov] = [mk]
+
+def _cfg_from_env() -> dict:
+    """Full config from environment only (Railway / Docker). No JSON files."""
+    c = deepcopy(DEFAULT_CONFIG)
+    c["model_keys"] = {"anthropic": "", "gemini": "", "openai": ""}
+    c["model_key_pools"] = {}
+    c["instantly_clients"] = []
+    env_clients = {k[len("INSTANTLY_CLIENT_"):].lower(): v
+                   for k, v in os.environ.items() if k.startswith("INSTANTLY_CLIENT_")}
+    for name in sorted(env_clients.keys()):
+        c["instantly_clients"].append({"name": name, "key": env_clients[name]})
+
+    env_reoon: List[dict] = []
+    single = os.environ.get("REOON_KEY", "").strip()
+    if single:
+        env_reoon.append({"name": "reoon", "key": single})
+    i = 1
+    while True:
+        k_ = os.environ.get(f"REOON_KEY_{i}", "").strip()
+        if not k_:
+            break
+        n_ = os.environ.get(f"REOON_KEY_{i}_NAME", f"reoon{i}")
+        env_reoon.append({"name": n_, "key": k_})
+        i += 1
+    c["reoon_keys"] = env_reoon
+
+    v = os.environ.get("TELEGRAM_TOKEN", "") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if v:
+        c["telegram_token"] = v.strip()
+    raw = os.environ.get("TELEGRAM_ALLOWED_USERS", "")
+    if raw:
+        try:
+            c["telegram_allowed_users"] = [int(x.strip()) for x in raw.split(",") if x.strip()]
+        except Exception:
+            pass
+
+    for envk, ck, cast in [
+        ("MAILCLAW_DAILY_LIMIT", "daily_limit", int),
+        ("MAILCLAW_REVERIFY_DAYS", "reverify_days", int),
+    ]:
+        ev = os.environ.get(envk, "").strip()
+        if ev:
+            try:
+                c[ck] = cast(ev)
+            except ValueError:
+                pass
+    ev = os.environ.get("MAILCLAW_RATE_LIMIT_DELAY", "").strip()
+    if ev:
+        try:
+            c["rate_limit_delay"] = float(ev)
+        except ValueError:
+            pass
+
+    _apply_model_key_pools(c)
+    for prov in ("gemini", "anthropic", "openai"):
+        pool = c.get("model_key_pools", {}).get(prov, [])
+        if pool:
+            c["model_keys"][prov] = pool[0]
+    return c
+
 def cfg_load() -> dict:
+    if use_env_config():
+        return _cfg_from_env()
+
     if not CONFIG_FILE.exists():
         CONFIG_FILE.write_text(json.dumps(DEFAULT_CONFIG, indent=2))
     c = json.loads(CONFIG_FILE.read_text())
-    for k, v in DEFAULT_CONFIG.items(): c.setdefault(k, v)
+    for k, v in DEFAULT_CONFIG.items():
+        c.setdefault(k, v)
     c.setdefault("model_keys", {})
-    for mk in ["anthropic","gemini","openai"]: c["model_keys"].setdefault(mk,"")
+    c.setdefault("model_key_pools", {})
+    for mk in ["anthropic", "gemini", "openai"]:
+        c["model_keys"].setdefault(mk, "")
 
-    # ── AI provider keys ────────────────────────────────────────────────────
-    for provider, envs in [("gemini",  ["GEMINI_API_KEY","GOOGLE_API_KEY"]),
-                            ("anthropic",["ANTHROPIC_API_KEY"]),
-                            ("openai",  ["OPENAI_API_KEY"])]:
+    # ── AI provider keys (single env var, if not in file) ────────────────────
+    for provider, envs in [("gemini", ["GEMINI_API_KEY", "GOOGLE_API_KEY"]),
+                             ("anthropic", ["ANTHROPIC_API_KEY"]),
+                             ("openai", ["OPENAI_API_KEY"])]:
         if not c["model_keys"].get(provider):
             for e in envs:
-                v = os.environ.get(e,"")
-                if v: c["model_keys"][provider]=v; break
+                v = os.environ.get(e, "")
+                if v:
+                    c["model_keys"][provider] = v
+                    break
+
+    _apply_model_key_pools(c)
 
     # ── Telegram ────────────────────────────────────────────────────────────
     if not c.get("telegram_token"):
-        v=os.environ.get("TELEGRAM_TOKEN","") or os.environ.get("TELEGRAM_BOT_TOKEN","")
-        if v: c["telegram_token"]=v
-
-    # TELEGRAM_ALLOWED_USERS=123456789,987654321
+        v = os.environ.get("TELEGRAM_TOKEN", "") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if v:
+            c["telegram_token"] = v
     if not c.get("telegram_allowed_users"):
-        raw=os.environ.get("TELEGRAM_ALLOWED_USERS","")
+        raw = os.environ.get("TELEGRAM_ALLOWED_USERS", "")
         if raw:
-            try: c["telegram_allowed_users"]=[int(x.strip()) for x in raw.split(",") if x.strip()]
-            except: pass
+            try:
+                c["telegram_allowed_users"] = [int(x.strip()) for x in raw.split(",") if x.strip()]
+            except Exception:
+                pass
 
-    # ── Instantly: INSTANTLY_CLIENT_MYCO=<api_key> (one per client) ─────────
-    env_clients={k[len("INSTANTLY_CLIENT_"):].lower():v
-                 for k,v in os.environ.items() if k.startswith("INSTANTLY_CLIENT_")}
-    existing_names={cl["name"].lower() for cl in c.get("instantly_clients",[])}
-    for name,key in env_clients.items():
+    # ── Instantly: INSTANTLY_CLIENT_<NAME>=<api_key> ─────────────────────────
+    env_clients = {k[len("INSTANTLY_CLIENT_"):].lower(): v
+                   for k, v in os.environ.items() if k.startswith("INSTANTLY_CLIENT_")}
+    existing_names = {cl["name"].lower() for cl in c.get("instantly_clients", [])}
+    for name, key in env_clients.items():
         if name not in existing_names:
-            c.setdefault("instantly_clients",[]).append({"name":name,"key":key})
+            c.setdefault("instantly_clients", []).append({"name": name, "key": key})
 
-    # ── Reoon: REOON_KEY=<key>  or  REOON_KEY_1=<key>, REOON_KEY_2=<key> ───
+    # ── Reoon: REOON_KEY or REOON_KEY_1, REOON_KEY_2, ... ───────────────────
     if not c.get("reoon_keys"):
-        env_reoon=[]
-        single=os.environ.get("REOON_KEY","")
-        if single: env_reoon.append({"name":"reoon","key":single})
-        i=1
+        env_reoon: List[dict] = []
+        single = os.environ.get("REOON_KEY", "")
+        if single:
+            env_reoon.append({"name": "reoon", "key": single})
+        i = 1
         while True:
-            k_=os.environ.get(f"REOON_KEY_{i}","")
-            if not k_: break
-            n_=os.environ.get(f"REOON_KEY_{i}_NAME",f"reoon{i}")
-            env_reoon.append({"name":n_,"key":k_})
-            i+=1
-        if env_reoon: c["reoon_keys"]=env_reoon
+            k_ = os.environ.get(f"REOON_KEY_{i}", "")
+            if not k_:
+                break
+            n_ = os.environ.get(f"REOON_KEY_{i}_NAME", f"reoon{i}")
+            env_reoon.append({"name": n_, "key": k_})
+            i += 1
+        if env_reoon:
+            c["reoon_keys"] = env_reoon
 
-    # ── Analytics profiles: ANALYTICS_PROFILE_WILL=<json> ──────────────────
-    for k,v in os.environ.items():
-        if k.startswith("ANALYTICS_PROFILE_"):
-            pname=k[len("ANALYTICS_PROFILE_"):].lower()
-            ppath=ANALYTICS_DIR/f"{pname}.json"
-            if not ppath.exists():
-                try: ppath.write_text(v,encoding="utf-8"); json.loads(v)
-                except: pass
+    # ── Analytics profiles: materialize env JSON to disk once (local CLI) ───
+    if not use_env_config():
+        for k, v in os.environ.items():
+            if k.startswith("ANALYTICS_PROFILE_"):
+                pname = k[len("ANALYTICS_PROFILE_"):].lower()
+                ppath = ANALYTICS_DIR / f"{pname}.json"
+                if not ppath.exists():
+                    try:
+                        ppath.write_text(v, encoding="utf-8")
+                        json.loads(v)
+                    except Exception:
+                        pass
 
     return c
-def cfg_save(c: dict): CONFIG_FILE.write_text(json.dumps(c, indent=2))
+
+def cfg_save(c: dict):
+    if use_env_config():
+        log.debug("cfg_save skipped (env-only config)")
+        return
+    CONFIG_FILE.write_text(json.dumps(c, indent=2))
 
 def hist_load() -> dict:
+    global _memory_history
+    if use_env_config():
+        if _memory_history is None:
+            _memory_history = {}
+        return _memory_history
     if HISTORY_FILE.exists():
-        try: return json.loads(HISTORY_FILE.read_text())
-        except: pass
+        try:
+            return json.loads(HISTORY_FILE.read_text())
+        except Exception:
+            pass
     return {}
 
-def hist_save(h: dict): HISTORY_FILE.write_text(json.dumps(h, indent=2))
+def hist_save(h: dict):
+    global _memory_history
+    if use_env_config():
+        _memory_history = h
+        return
+    HISTORY_FILE.write_text(json.dumps(h, indent=2))
 
 def hist_mark_verified(results: dict):
     """
@@ -429,7 +579,26 @@ MODELS: Dict[str, dict] = {
         "provider":"openai","model_id":"gpt-4o",
         "cost_in":2.50,"cost_out":10.00,"label":"GPT-4o ($2.50/$10 per 1M tokens)"},
 }
-_ai_clients: Dict[str,Any] = {}
+_ai_clients: Dict[Tuple[str, str], Any] = {}
+_ai_provider_rr: Dict[str, int] = {}
+
+def _pick_api_key_for_provider(c: dict, prov: str) -> str:
+    pool = [x for x in c.get("model_key_pools", {}).get(prov, []) if x and str(x).strip()]
+    if not pool:
+        k = (c.get("model_keys") or {}).get(prov, "")
+        pool = [k] if k else []
+    if not pool:
+        return ""
+    idx = _ai_provider_rr.get(prov, 0) % len(pool)
+    return pool[idx]
+
+def _bump_ai_provider(prov: str):
+    _ai_provider_rr[prov] = _ai_provider_rr.get(prov, 0) + 1
+
+def _invalidate_ai_clients_for_model(model_key: str):
+    for k in list(_ai_clients.keys()):
+        if k[0] == model_key:
+            del _ai_clients[k]
 
 def ai_cost(model_key:str,t_in:int,t_out:int)->float:
     m=MODELS.get(model_key,{})
@@ -438,20 +607,29 @@ def ai_cost(model_key:str,t_in:int,t_out:int)->float:
 def ai_cost_est(model_key:str,n:int,avg_in:int=450,avg_out:int=250)->float:
     return ai_cost(model_key,n*avg_in,n*avg_out)
 
-def _get_ai_client(model_key:str):
-    if model_key in _ai_clients: return _ai_clients[model_key]
-    c=cfg_load(); keys=c.get("model_keys",{}); m=MODELS.get(model_key,{}); prov=m.get("provider","")
-    if prov=="gemini":
+def _get_ai_client(model_key: str):
+    c = cfg_load()
+    m = MODELS.get(model_key, {})
+    prov = m.get("provider", "")
+    api_key = _pick_api_key_for_provider(c, prov)
+    if not api_key:
+        raise ValueError(f"No API key configured for provider '{prov}' (model {model_key})")
+    ck = (model_key, api_key)
+    if ck in _ai_clients:
+        return _ai_clients[ck]
+    if prov == "gemini":
         from openai import OpenAI
-        cl=OpenAI(api_key=keys.get("gemini",""), base_url=GEMINI_BASE)
-    elif prov=="anthropic":
+        cl = OpenAI(api_key=api_key, base_url=GEMINI_BASE)
+    elif prov == "anthropic":
         import anthropic as _ant
-        cl=_ant.Anthropic(api_key=keys.get("anthropic",""))
-    elif prov=="openai":
+        cl = _ant.Anthropic(api_key=api_key)
+    elif prov == "openai":
         from openai import OpenAI
-        cl=OpenAI(api_key=keys.get("openai",""))
-    else: raise ValueError(f"Unknown model: {model_key}")
-    _ai_clients[model_key]=cl; return cl
+        cl = OpenAI(api_key=api_key)
+    else:
+        raise ValueError(f"Unknown model: {model_key}")
+    _ai_clients[ck] = cl
+    return cl
 
 def ai_call(model_key:str,system:str,user:str,
             max_tokens:int=500,temperature:float=0.5)->Tuple[str,int,int]:
@@ -468,32 +646,37 @@ def ai_call(model_key:str,system:str,user:str,
     """
     if model_key not in MODELS:
         raise ValueError(f"Unknown model key '{model_key}'. Known models: {list(MODELS.keys())}")
-    m=MODELS[model_key]; cl=_get_ai_client(model_key); prov=m["provider"]; mid=m["model_id"]
+    m = MODELS[model_key]
+    prov = m["provider"]
+    mid = m["model_id"]
     log.debug("ai_call model=%s provider=%s max_tokens=%d temp=%.2f user_preview=%r",
               model_key, prov, max_tokens, temperature, user[:80])
     for attempt in range(3):
+        cl = _get_ai_client(model_key)
         try:
-            if prov=="anthropic":
+            if prov == "anthropic":
                 import anthropic as _ant
-                r=cl.messages.create(model=mid,max_tokens=max_tokens,system=system,
-                                     messages=[{"role":"user","content":user}])
-                t_in  = r.usage.input_tokens  if r.usage else max_tokens
-                t_out = r.usage.output_tokens if r.usage else max_tokens//2
-                text  = r.content[0].text.strip()
+                r = cl.messages.create(model=mid, max_tokens=max_tokens, system=system,
+                                       messages=[{"role": "user", "content": user}])
+                t_in = r.usage.input_tokens if r.usage else max_tokens
+                t_out = r.usage.output_tokens if r.usage else max_tokens // 2
+                text = r.content[0].text.strip()
             else:
-                # OpenAI SDK (used for both OpenAI and Gemini via compat endpoint)
-                r=cl.chat.completions.create(model=mid,max_tokens=max_tokens,temperature=temperature,
-                    messages=[{"role":"system","content":system},{"role":"user","content":user}])
-                t_in  = r.usage.prompt_tokens     if r.usage else max_tokens
-                t_out = r.usage.completion_tokens if r.usage else max_tokens//2
-                text  = r.choices[0].message.content.strip()
-            cost=ai_cost(model_key,t_in,t_out)
+                r = cl.chat.completions.create(model=mid, max_tokens=max_tokens, temperature=temperature,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
+                t_in = r.usage.prompt_tokens if r.usage else max_tokens
+                t_out = r.usage.completion_tokens if r.usage else max_tokens // 2
+                text = r.choices[0].message.content.strip()
+            cost = ai_cost(model_key, t_in, t_out)
             log.debug("ai_call done: in=%d out=%d cost=$%.6f response_preview=%r", t_in, t_out, cost, text[:80])
             return text, t_in, t_out
         except Exception as e:
-            log.warning("ai_call attempt %d/%d failed: %s", attempt+1, 3, e)
-            if attempt==2: raise
-            time.sleep(2**attempt)
+            log.warning("ai_call attempt %d/%d failed: %s", attempt + 1, 3, e)
+            _bump_ai_provider(prov)
+            _invalidate_ai_clients_for_model(model_key)
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
     raise RuntimeError("ai_call exhausted retries")
 
 def parse_json(text:str)->dict:
@@ -501,13 +684,19 @@ def parse_json(text:str)->dict:
     return json.loads(text)
 
 def cheapest_available_model()->Optional[str]:
-    c=cfg_load(); keys=c.get("model_keys",{})
-    order=["gemini/gemini-2.5-flash-lite","gemini/gemini-2.0-flash",
-           "openai/gpt-4o-mini","anthropic/claude-haiku-4-5"]
+    c = cfg_load()
+    keys = c.get("model_keys", {})
+    order = ["gemini/gemini-2.5-flash-lite", "gemini/gemini-2.0-flash",
+             "openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"]
     for mk in order:
-        if mk not in MODELS: continue
-        prov=MODELS[mk]["provider"]
-        if keys.get(prov,""): return mk
+        if mk not in MODELS:
+            continue
+        prov = MODELS[mk]["provider"]
+        pool = [x for x in c.get("model_key_pools", {}).get(prov, []) if x and str(x).strip()]
+        if pool:
+            return mk
+        if keys.get(prov, ""):
+            return mk
     return None
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2936,21 +3125,18 @@ def cmd_bot(_args):
 
     async def analytics_cmd(u,ctx):
         c2=cfg_load(); args_=ctx.args or []
-        prof_dir=APP_DIR/"analytics"
-        profiles=[p.stem for p in prof_dir.glob("*.json")] if prof_dir.exists() else []
+        all_prof=analytics_profiles_all()
+        profiles=sorted({k.lower() for k in all_prof.keys()})
         if not args_:
             if not profiles:
-                await u.message.reply_text("No analytics profiles yet. Create one with: mailclaw analytics-profiles"); return
+                await u.message.reply_text("No analytics profiles yet. Set ANALYTICS_PROFILE_* env vars or run: mailclaw analytics-profiles"); return
             plist="\n".join(f"• /analytics {p}" for p in sorted(profiles))
             await u.message.reply_text(f"*Analytics Profiles*\n\n{plist}\n\nOptional dates: /analytics will 2026-03-01 2026-03-31",parse_mode="Markdown"); return
 
         prof_name=args_[0].lower()
-        prof_path=APP_DIR/"analytics"/f"{prof_name}.json"
-        if not prof_path.exists():
+        prof=analytics_profile_load(prof_name)
+        if not prof:
             await u.message.reply_text(f"Profile `{prof_name}` not found. Available: {', '.join(profiles)}",parse_mode="Markdown"); return
-
-        import json as _json
-        prof=_json.loads(prof_path.read_text(encoding="utf-8"))
         client_name=prof.get("client_name") or (prof.get("client_names") or [""])[0]
         benchmarks=prof.get("benchmarks",{})
 
@@ -3293,23 +3479,51 @@ ANALYTICS_PROFILE_TEMPLATE = {
     "campaign_name_filter": "",
 }
 
-def analytics_profile_load(name:str)->Optional[dict]:
-    p=ANALYTICS_DIR/f"{name}.json"
+def _analytics_profiles_from_env() -> Dict[str, dict]:
+    """ANALYTICS_PROFILE_<NAME>=<json> — used on Railway without writable disk."""
+    out: Dict[str, dict] = {}
+    for k, v in os.environ.items():
+        if not k.startswith("ANALYTICS_PROFILE_"):
+            continue
+        try:
+            pname = k[len("ANALYTICS_PROFILE_"):].lower()
+            prof = json.loads(v)
+            out[pname] = prof
+        except Exception:
+            pass
+    return out
+
+def analytics_profile_load(name: str) -> Optional[dict]:
+    n = name.lower().strip()
+    envp = _analytics_profiles_from_env().get(n)
+    if envp is not None:
+        return envp
+    p = ANALYTICS_DIR / f"{name}.json"
     if p.exists():
-        try: return json.loads(p.read_text())
-        except: return None
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return None
     return None
 
-def analytics_profile_save(prof:dict):
-    (ANALYTICS_DIR/f"{prof['name']}.json").write_text(json.dumps(prof,indent=2))
+def analytics_profile_save(prof: dict):
+    if use_env_config():
+        log.debug("analytics_profile_save skipped (env-only config)")
+        return
+    (ANALYTICS_DIR / f"{prof['name']}.json").write_text(json.dumps(prof, indent=2))
 
-def analytics_profiles_all()->Dict[str,dict]:
-    out={}
-    for f in sorted(ANALYTICS_DIR.glob("*.json")):
-        try:
-            p=json.loads(f.read_text())
-            out[p.get("name",f.stem)]=p
-        except: pass
+def analytics_profiles_all() -> Dict[str, dict]:
+    out: Dict[str, dict] = {}
+    if not use_env_config():
+        for f in sorted(ANALYTICS_DIR.glob("*.json")):
+            try:
+                p = json.loads(f.read_text())
+                out[p.get("name", f.stem)] = p
+            except Exception:
+                pass
+    for pname, prof in _analytics_profiles_from_env().items():
+        key = prof.get("name", pname)
+        out[key] = prof
     return out
 
 def _pct(n,d)->str:

@@ -91,29 +91,65 @@ Time period:
 
 ---
 
-## Deploy to Railway
+## Deploy to Railway (hosted bot)
 
 1. Push this repo to GitHub (private or public)
-2. Railway → New Project → Deploy from GitHub
-3. Add environment variables from `.env.example`
+2. Railway → New Project → Deploy from GitHub (Dockerfile is auto-detected)
+3. Add **all** secrets as environment variables (see below) — the container filesystem is **ephemeral**; do not rely on `~/.mailclaw/config.json` surviving redeploys.
 4. Health check: `GET /health` → `{"status":"ok","bot":"running"}`
 
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app)
 
----
+### Config mode: env-only vs local files
 
-## Environment Variables
+| Mode | When | Behaviour |
+|------|------|-----------|
+| **Env-only** | `RAILWAY_ENVIRONMENT` is set (Railway does this), or `MAILCLAW_CONFIG_SOURCE=env`, or `MAILCLAW_USE_ENV=1` | No `config.json` or `email_history.json` on disk. All API keys and clients come from env vars. Verification **history** is kept **in memory** only (resets on restart). |
+| **File** | Default on your laptop | Uses `~/.mailclaw/*.json` as before. |
+| **Force files on Railway** | `MAILCLAW_CONFIG_SOURCE=file` | Use if you mount a persistent volume at `~/.mailclaw`. |
 
-See `.env.example` for full reference.
+No Redis or MongoDB is required. If you later need durable verification history across restarts, add a small Redis (e.g. Upstash) — not bundled in this repo.
 
-```bash
-TELEGRAM_TOKEN=...
-TELEGRAM_ALLOWED_USERS=123456789,987654321
-INSTANTLY_CLIENT_4DD=your_api_key
-REOON_KEY=your_reoon_key
-ANTHROPIC_API_KEY=sk-ant-...
-ANALYTICS_PROFILE_WILL={"name":"will",...}
-```
+### Multi-client agencies (Instantly + Reoon + AI)
+
+- **Instantly — one workspace API key per end client**
+
+  ```bash
+  INSTANTLY_CLIENT_ACME=sk_xxx
+  INSTANTLY_CLIENT_GD=sk_yyy
+  ```
+
+  The suffix (`ACME`, `GD`) becomes the internal client name (lowercased). Use the same name in analytics profile JSON as `client_name`.
+
+- **Reoon — multiple verifier accounts**
+
+  ```bash
+  REOON_KEY=first_key
+  REOON_KEY_1=second_key
+  REOON_KEY_1_NAME=team_b
+  ```
+
+  Keys rotate by daily usage; live Reoon balance API stays the source of truth.
+
+- **OpenAI / Gemini / Anthropic — multiple keys (retry rotates)**
+
+  ```bash
+  OPENAI_API_KEY=sk_primary
+  OPENAI_API_KEY_2=sk_backup
+  GEMINI_API_KEY=AIza...
+  GEMINI_API_KEY_2=...
+  ANTHROPIC_API_KEY=sk-ant-...
+  ```
+
+- **Analytics profiles on Railway** — store JSON in env (no file path):
+
+  ```bash
+  ANALYTICS_PROFILE_WILL='{"name":"will","client_name":"acme","benchmarks":{...},"campaign_name_filter":""}'
+  ```
+
+  List profiles in Telegram: `/analytics` — names come from `ANALYTICS_PROFILE_<NAME>` and optional `~/.mailclaw/analytics/*.json` when not env-only.
+
+Copy `.env.example` for the full variable list.
 
 ---
 
