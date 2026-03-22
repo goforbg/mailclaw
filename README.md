@@ -1,13 +1,30 @@
+<div align="center">
+
 ```
- __  __       _  _  ___  _                
-|  \/  | __ _(_)| |/ __|| | __ _ __      
-| |\/| |/ _` | || | (__ | |/ _` \ \ /\ / /
-| |  | | (_| | || |\__ \| | (_| |\ V  V / 
-|_|  |_|\__,_|_||_||___/|_|\__,_| \_/\_/  
-                                           
-  cold email pipeline  •  analytics  •  v2.0
-  by inboxpiratesconsulting.com × Tuco.ai
+╔══════════════════════════════════════════════════════════════════════════╗
+║ MAILCLAW  ·  Cold email ops for GTM teams, agencies & RevOps             ║
+║ CSV → verify → AI enrich → Instantly  ·  analytics  ·  Telegram bot      ║
+╚══════════════════════════════════════════════════════════════════════════╝
 ```
+
+### Cold email ops · Verify · Enrich · Instantly · Analytics · Telegram
+
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-Proprietary-8B0000?style=for-the-badge)](LICENSE)
+[![Instantly](https://img.shields.io/badge/Instantly-API%20V2-5B4FFF?style=for-the-badge)](https://developer.instantly.ai)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://core.telegram.org/bots)
+
+<br/>
+
+[![Book implementation](https://img.shields.io/badge/Book%20implementation-InboxPirates-FF4F00?style=for-the-badge)](https://inboxpirates.com/cal)
+[![Tuco demo](https://img.shields.io/badge/Tuco-demo-iMessage-000000?style=for-the-badge&logo=apple)](https://tuco.ai/demo)
+
+<sub><a href="https://inboxpiratesconsulting.com"><strong>InboxPirates Consulting</strong></a> × <a href="https://tuco.ai"><strong>Tuco.ai</strong></a></sub>
+
+</div>
+
+---
+
 
 **Mailclaw** is an **operations stack for GTM and cold-email teams**: one CLI to take prospect lists from **raw CSV → verified → AI-enriched → live in Instantly**, then **measure what actually happened**—per campaign, per client, and portfolio-wide—without spreadsheet hell.
 
@@ -24,57 +41,73 @@
 - **Always-on bot:** ask questions in plain English, get live numbers, attach exports—built for agencies that need speed and clarity across accounts.
 
 Built by **[InboxPirates Consulting](https://inboxpiratesconsulting.com)** — the agency behind some of the highest-performing cold email systems in B2B SaaS.  
-Powered by **[Tuco.ai](https://tuco.ai)** — automate your iMessage outreach.
+Powered by **[Tuco.ai](https://tuco.ai)** — automate your iMessage outreach (**[demo](https://tuco.ai/demo)**).
+
+<div align="center">
+
+**If Mailclaw stops you living inside a spreadsheet, leave a star — it helps.**
+
+[![Stars](https://img.shields.io/github/stars/goforbg/mailclaw?label=Stars&logo=github&style=social)](https://github.com/goforbg/mailclaw)
+[![Follow](https://img.shields.io/badge/Follow-%40goforbg-1DA1F2?style=social&logo=x)](https://x.com/goforbg)
+
+</div>
 
 ---
 
-```
- █████╗  ██████╗ ███████╗███╗   ██╗ ██████╗ ██╗███████╗███████╗
-██╔══██╗██╔════╝ ██╔════╝████╗  ██║██╔═══██╗██║██╔════╝██╔════╝
-███████║██║  ███╗█████╗  ██╔██╗ ██║██║   ██║██║███████╗█████╗  
-██╔══██║██║   ██║██╔══╝  ██║╚██╗██║██║   ██║██║╚════██║██╔══╝  
-██║  ██║╚██████╔╝███████╗██║ ╚████║╚██████╔╝██║███████║███████╗
-╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚══════╝╚══════╝
- ██╗   ██╗ ██████╗ ██╗   ██╗██████╗     █████╗  ██████╗ ███████╗███╗   ██╗ ██████╗██╗   ██╗
- ██║   ██║██╔═══██╗██║   ██║██╔══██╗   ██╔══██╗██╔════╝ ██╔════╝████╗  ██║██╔════╝╚██╗ ██╔╝
- ██║   ██║██║   ██║██║   ██║██████╔╝   ███████║██║  ███╗█████╗  ██╔██╗ ██║██║      ╚████╔╝ 
- ╚██╗ ██╔╝██║   ██║██║   ██║██╔══██╗   ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║██║       ╚██╔╝  
-  ╚████╔╝ ╚██████╔╝╚██████╔╝██║  ██║   ██║  ██║╚██████╔╝███████╗██║ ╚████║╚██████╗   ██║   
-   ╚═══╝   ╚═════╝  ╚═════╝ ╚═╝  ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝   ╚═╝   
-```
+## TL;DR
 
-### **→ [BOOK A STRATEGY CALL — GET MAILCLAW BUILT FOR YOUR AGENCY](https://inboxpirates.com/demo)** ←
+| You want… | You type… |
+|:---|:---|
+| **Numbers without opening Instantly** | `python mailclaw.py ask "how many meetings did we book this month?"` |
+| **A client-specific answer** | `python mailclaw.py ask --profile acme "bounce rate last week"` or Telegram: `/ask acme what was our reply rate in March?` |
+| **A full Excel war room** | `python mailclaw.py analytics` → pick dates → export |
+| **Verify a list from your phone** | Send a `.csv` to the Telegram bot |
+| **Credits that aren’t made up** | `python mailclaw.py balance` or `/balance` (live Reoon API) |
 
-**Agency teams:** if you want this pipeline, analytics stack, and Telegram ops **implemented end-to-end for your shop**, book here:
+> **One sentence:** Mailclaw is the **CLI + Telegram layer** that sits on top of Instantly + Reoon + your AI keys so **GTM and agencies** stop duct-taping CSVs and screenshots.
 
-# **[https://inboxpirates.com/demo](https://inboxpirates.com/demo)**
+### Spreadsheet trauma vs Mailclaw
 
-Implementation • infra • multi-client keys • reporting — **[inboxpiratesconsulting.com](https://inboxpiratesconsulting.com)**
+| Without Mailclaw | With Mailclaw |
+|:---|:---|
+| Five tabs and a prayer | One **CLI** or **Telegram** answer tied to Instantly |
+| “I’ll pull numbers tomorrow” | `python mailclaw.py ask "…"` from the terminal **or** your phone |
+| Duplicate leads counted twice in reports | Cross-campaign dedupe in **analytics** |
+| Another VA copying CSVs | **Drop a CSV in Telegram** → verified splits back |
+| Guessing remaining Reoon credits | `balance` / `/balance` → **live API** when reachable |
 
 ---
 
-```
-████████╗██╗   ██╗ ██████╗ ██████╗      █████╗ ██╗
-╚══██╔══╝██║   ██║██╔════╝██╔═══██╗    ██╔══██╗██║
-   ██║   ██║   ██║██║     ██║   ██║    ███████║██║
-   ██║   ██║   ██║██║     ██║   ██║    ██╔══██║██║
-   ██║   ╚██████╔╝╚██████╗╚██████╔╝    ██║  ██║██║
-   ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝     ╚═╝  ╚═╝╚═╝
+### Table of contents
 
-  Automate your iMessage outreach.
-  tuco.ai  •  @tuco_ai
-```
+**Setup & deploy:** [What it does](#what-it-does) · [Quick start](#quick-start) · [Commands](#commands) · [Deploy to Railway](#deploy-to-railway-hosted-bot)  
+**Examples (the good stuff):** [Examples galore](#examples-galore) · [Telegram Bot](#telegram-bot) · [Analytics](#analytics)  
+**Trust & ops:** [Tech stack](#tech-stack) · [Operations & reliability](#operations--reliability) · [License](#license) · [By](#by)
+
+---
+
+### Work with us
+
+| | |
+|:---|:---|
+| **Ship Mailclaw for your agency** | **[Book a call → inboxpirates.com/cal](https://inboxpirates.com/cal)** |
+| **Site** | **[inboxpiratesconsulting.com](https://inboxpiratesconsulting.com)** |
+| **Tuco (iMessage at scale)** | **[tuco.ai](https://tuco.ai)** · **[tuco.ai/demo](https://tuco.ai/demo)** |
 
 ---
 
 ## What it does
 
-```
-CSV  →  column map  →  email verify (Reoon)  →  AI enrich  →  Instantly upload
-                                                      ↓
-                                             Telegram analytics bot
-                                             campaign reports  •  dupe audit
-                                             daily / weekly / monthly
+```text
+   ┌─────┐   ┌─────────┐   ┌────────┐   ┌────────┐   ┌──────────────┐
+   │ CSV │──▶│ Map cols│──▶│ Verify │──▶│ Enrich │──▶│ Instantly V2 │
+   └─────┘   └─────────┘   │ Reoon  │   │  AI    │   └──────────────┘
+                           └────────┘   └────────┘          │
+                                                            ▼
+                                                   ┌──────────────────┐
+                                                   │ Telegram bot     │
+                                                   │ analytics · CSV  │
+                                                   └──────────────────┘
 ```
 
 ---
@@ -100,12 +133,81 @@ python mailclaw.py bot           # start Telegram bot
 | `mailclaw.py enrich` | AI enrichment only |
 | `mailclaw.py upload` | Upload to Instantly only |
 | `mailclaw.py analytics` | Interactive analytics report |
+| `mailclaw.py ask "…"` | Natural-language analytics (Instantly + AI); `--profile name` for one client |
 | `mailclaw.py bot` | Start Telegram bot (24/7) |
 | `mailclaw.py balance` | Check Reoon + AI credits |
 | `mailclaw.py config` | Manage API keys |
 | `mailclaw.py profiles` | Manage enrichment profiles |
 | `mailclaw.py clients` | Manage Instantly clients |
 | `mailclaw.py analytics-profiles` | Manage analytics profiles |
+
+---
+
+## Examples galore
+
+**Natural-language analytics (CLI)** — uses live Instantly data + Gemini (same engine as the Telegram bot):
+
+```bash
+# Portfolio questions (default analytics profile)
+python mailclaw.py ask "how many emails did we send yesterday?"
+python mailclaw.py ask "what was our human reply rate last week?"
+python mailclaw.py ask "how many meetings did we book this month?"
+
+# Lock to one analytics profile (multi-client agencies)
+python mailclaw.py ask --profile will "show me stats for this week"
+python mailclaw.py ask --profile acme "what was our bounce rate in Q1?"
+
+# Lists + exports (phrases like “export” / “csv” / “excel” trigger attachments when applicable)
+python mailclaw.py ask "which leads booked a meeting this week — export csv"
+python mailclaw.py ask "download full analytics excel for last month"
+```
+
+**Interactive report (CLI)** — full campaign breakdown + Excel when you want menus:
+
+```bash
+python mailclaw.py analytics
+python mailclaw.py analytics --start 2026-03-01 --end 2026-03-31
+```
+
+**Ops & keys**
+
+```bash
+python mailclaw.py balance          # live Reoon + AI key status
+python mailclaw.py config           # keys, limits, Telegram allowlist
+python mailclaw.py analytics-profiles
+```
+
+<details>
+<summary><strong>Even more Telegram examples</strong> (tap to expand)</summary>
+
+**Slash commands**
+
+```text
+/analytics                    → lists analytics profiles
+/analytics will               → full report for profile “will” (live data)
+/analytics will 2026-03-01 2026-03-31   → same, custom window
+/balance                      → Reoon credits (synced from API when reachable)
+/help                         → help + /ask usage
+```
+
+**Plain English (same as `mailclaw ask`)**
+
+```text
+how many meetings did we book this week?
+what was our reply rate in March?
+will how many leads did we generate last month?     ← optional first word = profile
+what meetings did we book this week — export csv
+```
+
+**Drop a file**
+
+```text
+Upload leads.csv  →  verification runs  →  you get safe / catchall / by-ESP CSVs back
+```
+
+*The bot has strong opinions about nonsense messages. `/help` is your friend.*
+
+</details>
 
 ---
 
@@ -217,18 +319,26 @@ Copy `.env.example` for more options.
 
 ## Telegram Bot
 
-```
-/analytics          → list profiles
-/analytics will     → run report (live Instantly data)
-/balance            → Reoon credits (live API sync; falls back if API unreachable)
-/help               → commands + /ask profile help
+Same brain as **`mailclaw ask`** — see **[Examples galore](#examples-galore)** for copy-paste. Short version:
 
-Or just type any question:
-  "how many meetings did we book this week?"
-  "what was our reply rate in March?"
-
-Drop a .csv → get back verified + filtered CSVs
 ```
+/analytics                          → list profiles
+/analytics will                     → full report (live Instantly)
+/analytics will 2026-03-01 2026-03-31
+/balance                            → Reoon (live sync when API is up)
+/help                               → help + /ask profile cheat sheet
+/ask will how many meetings Q1?     → optional profile as first word after /ask
+```
+
+**Plain text** (no slash): same questions as the CLI — or start with a **profile name** + question.
+
+**Documents:** send a **`.csv`** → Reoon verification → **safe / catchall / ESP** CSVs back.
+
+<div align="center">
+
+<sub><b>Share line for Twitter / LinkedIn:</b> “We wired Instantly + Reoon + Telegram into one CLI. CSV in → verified → enriched → live sends → honest analytics. Mailclaw.” · <code>@goforbg</code></sub>
+
+</div>
 
 ---
 
@@ -265,50 +375,28 @@ Copyright © 2026 Crewcharge Technologies Private Limited and Foxwell & Pierce G
 
 ## By
 
-```
- ██████╗ ██╗   ██╗██╗██████╗ ██╗      █████╗ ██████╗ ██╗    ██╗ █████╗      ██████╗ ██╗██████╗ ██╗██╗  ██╗ █████╗ ██████╗ 
- ██╔══██╗██║   ██║██║██╔══██╗██║     ██╔══██╗██╔══██╗██║    ██║██╔══██╗    ██╔════╝ ██║██╔══██╗██║██║  ██║██╔══██╗██╔══██╗
- ██████╔╝██║   ██║██║██████╔╝██║     ███████║██████╔╝██║ █╗ ██║███████║    ██║  ███╗██║██████╔╝██║███████║███████║██████╔╝
- ██╔══██╗██║   ██║██║██╔══██╗██║     ██╔══██║██╔══██╗██║███╗██║██╔══██║    ██║   ██║██║██╔══██╗██║██╔══██║██╔══██║██╔══██╗
- ██████╔╝╚██████╔╝██║██║  ██║███████╗██║  ██║██║  ██║╚███╔███╔╝██║  ██║    ╚██████╔╝██║██║  ██║██║██║  ██║██║  ██║██║  ██║
- ╚═════╝  ╚═════╝ ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝  ╚═╝     ╚═════╝ ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
-```
+<div align="center">
 
-**Bharadwaj Giridhar** — founder / builder — **`@goforbg` everywhere**
+### Bharadwaj Giridhar · **`@goforbg`**
 
-| Platform | **@goforbg** |
-|:---:|:---|
-| GitHub | **[github.com/goforbg](https://github.com/goforbg)** |
-| X (Twitter) | **[x.com/goforbg](https://x.com/goforbg)** |
-| LinkedIn | **[linkedin.com/in/goforbg](https://www.linkedin.com/in/goforbg/)** |
-| Instagram | **[instagram.com/goforbg](https://www.instagram.com/goforbg/)** |
+[![GitHub](https://img.shields.io/badge/GitHub-goforbg-181717?style=for-the-badge&logo=github)](https://github.com/goforbg)
+[![X](https://img.shields.io/badge/X-@goforbg-000000?style=for-the-badge&logo=x)](https://x.com/goforbg)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-in%2Fgoforbg-0A66C2?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/goforbg/)
+[![Instagram](https://img.shields.io/badge/Instagram-@goforbg-E4405F?style=for-the-badge&logo=instagram&logoColor=white)](https://www.instagram.com/goforbg/)
 
-```
-  ___       _            ____  _           _            
- |_ _|_ __ | |__   ___ |  _ \(_)_ __ __ _| |_ ___  ___ 
-  | || '_ \| '_ \ / _ \| |_) | | '__/ _` | __/ _ \/ __|
-  | || | | | |_) | (_) |  __/| | | | (_| | ||  __/\__ \
- |___|_| |_|_.__/ \___/|_|   |_|_|  \__,_|\__\___||___/
-                                                        
-  inboxpiratesconsulting.com  •  Cold email that actually lands.
-  BOOK THE PIPELINE FOR YOUR AGENCY → inboxpirates.com/demo
-```
+<br/>
 
-```
- _____                          _ 
-|_   _|   _  ___  ___     __ _(_)
-  | || | | |/ __/ _ \   / _` | |
-  | || |_| | (_| (_) | | (_| | |
-  |_| \__,_|\___\___/   \__,_|_|
-                                 
-  tuco.ai  •  iMessage automation for sales teams.
-  Reply from your own number. At scale.
-```
+**[InboxPirates Consulting](https://inboxpiratesconsulting.com)** — cold email that lands · **[Book a call](https://inboxpirates.com/cal)**  
+**[Tuco.ai](https://tuco.ai)** — iMessage automation · **[Demo](https://tuco.ai/demo)**
+
+</div>
 
 ---
 
-**Mailclaw** • **[@goforbg](https://github.com/goforbg)** on GitHub · [X](https://x.com/goforbg) · [LinkedIn](https://www.linkedin.com/in/goforbg/) · [Instagram](https://www.instagram.com/goforbg/) — *Bharadwaj Giridhar*
+<p align="center">
+  <b>Mailclaw</b> · <a href="https://github.com/goforbg">@goforbg</a>
+  · <a href="https://inboxpirates.com/cal">Agency cal</a>
+  · <a href="https://tuco.ai/demo">Tuco demo</a>
+</p>
 
-**Agency?** **[Book a call — inboxpirates.com/demo](https://inboxpirates.com/demo)** · **[inboxpiratesconsulting.com](https://inboxpiratesconsulting.com)**
-
-*Questions? Open an issue or DM on social above.*
+<p align="center"><i>Questions? Open an issue or DM on social above.</i></p>
