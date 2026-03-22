@@ -3,37 +3,52 @@ Proprietary Software — All Rights Reserved
 Copyright © 2026 Crewcharge Technologies Private Limited and Foxwell & Pierce Group Inc.
 All rights reserved.
 
-NOTICE: This repository is public for reference and transparency only. Making the
-source code visible does NOT grant you any right to use, copy, modify, merge,
-publish, distribute, sublicense, sell, rent, lease, or otherwise exploit this
-software or any portion of it.
+NOTICE: This repository is public for reference and transparency. Making the source code
+visible does not by itself grant rights beyond what is stated below.
 
 TERMS
 
-1. No license granted. You are not granted any license or right of any kind under
-   copyright, patent, trade secret, trademark, or other intellectual property
-   rights, except as strictly required to view the files in a web browser when
-   visiting this repository as hosted by the platform (e.g. “viewing” on GitHub).
+1. Viewing. You may view this repository through GitHub (or a mirror) in a web browser
+   as permitted by that platform.
 
-2. Prohibited without prior written permission from the copyright holder(s):
-   use in production or development; copying or cloning for any purpose;
-   modification or creation of derivative works; redistribution; incorporation
-   into any product or service; reverse engineering beyond what applicable law
-   expressly permits; and any commercial or non-commercial use of the Software.
+2. Community license (no fee). Subject to the restrictions in section 4, the copyright
+   holders grant you a limited, non-exclusive, non-transferable, revocable license to
+   use, copy, modify, and run the Software privately for:
 
-3. Commercial licensing. Use in a business context, resale, embedding in SaaS,
-   agency deployments, or any deployment other than passive viewing of this repo
-   requires a separate written commercial license. Contact the copyright holder
-   to inquire.
+   (a) Hobby / personal use: non-commercial, personal learning and experimentation; and
 
-4. No warranty. THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
-   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
-   EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-   DAMAGES OR OTHER LIABILITY.
+   (b) Small businesses: you are an agency or other business whose monthly recurring
+       revenue (“MRR”) is under United States dollars five thousand (USD $5,000), and you
+       use the Software only for your own internal operations (not to provide Mailclaw
+       as a hosted service to third parties, and not to remove attribution or imply
+       endorsement).
 
-5. Contributions. If you submit issues, pull requests, or other feedback, you
-   grant the copyright holder(s) a perpetual, irrevocable, worldwide, royalty-free
-   license to use that feedback for any purpose unless otherwise agreed in writing.
+   If your MRR reaches or exceeds USD $5,000, or your use falls outside (a)–(b), you
+   must obtain a commercial license (section 3) or stop using the Software except as
+   allowed by applicable law.
 
-For licensing inquiries: use the contact channels listed in the project README.
+3. Commercial license. Any use not covered by section 2 — including but not limited to
+   larger agencies, productized resale, embedding Mailclaw in a SaaS offering for
+   customers, or use after you exceed the section 2(b) MRR threshold — requires a
+   separate written commercial license from the copyright holders.
+
+   To discuss a commercial license or custom terms, book a call with
+   InboxPirates Consulting: https://inboxpirates.com/cal
+   Website: https://inboxpiratesconsulting.com
+
+4. Restrictions (apply to all grants above). You may not: remove or alter proprietary
+   notices; use the Software in violation of law; use the Software to send spam or
+   violate third-party terms (including Instantly, Reoon, Telegram, and email
+   providers); or represent that the copyright holders endorse you without permission.
+   No trademark license is granted except for reasonable attribution.
+
+5. No warranty. THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+   HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY.
+
+6. Contributions. If you submit issues, pull requests, or other feedback, you grant the
+   copyright holders a perpetual, irrevocable, worldwide, royalty-free license to use
+   that feedback for any purpose unless otherwise agreed in writing.
+
+For licensing inquiries: https://inboxpirates.com/cal · https://inboxpiratesconsulting.com

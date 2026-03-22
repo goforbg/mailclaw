@@ -17,7 +17,7 @@
 <br/>
 
 [![Book implementation](https://img.shields.io/badge/Book%20implementation-InboxPirates-FF4F00?style=for-the-badge)](https://inboxpirates.com/cal)
-[![Tuco demo](https://img.shields.io/badge/Tuco-demo-iMessage-000000?style=for-the-badge&logo=apple)](https://tuco.ai/demo)
+[![Tuco demo](https://img.shields.io/static/v1?label=tuco.ai&message=demo&color=000000&style=for-the-badge)](https://tuco.ai/demo)
 
 <sub><a href="https://inboxpiratesconsulting.com"><strong>InboxPirates Consulting</strong></a> × <a href="https://tuco.ai"><strong>Tuco.ai</strong></a></sub>
 
@@ -233,12 +233,16 @@ Time period:
 
 ## Deploy to Railway (hosted bot)
 
-1. Push this repo to GitHub (private or public)
-2. Railway → New Project → Deploy from GitHub (Dockerfile is auto-detected)
-3. Add **all** secrets as environment variables (see below) — the container filesystem is **ephemeral**; do not rely on `~/.mailclaw/config.json` surviving redeploys.
-4. Health check: `GET /health` → `{"status":"ok","bot":"running"}`
+This repo includes a **`Dockerfile`** that runs **`python mailclaw.py bot`** (see `CMD` in the file). Railway sets **`PORT`** automatically; Mailclaw binds a small **HTTP health server** on that port for `GET /health`.
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app)
+1. Push this repo to GitHub (private or public).
+2. **[Create a new Railway project](https://railway.app/new)** → **Deploy from GitHub** → select this repo. Railway will detect the **Dockerfile** and use its **`CMD`** (no need to override the start command unless you know what you’re doing).
+3. Add **all** secrets as **environment variables** (see below). The container filesystem is **ephemeral**; do not rely on `~/.mailclaw/config.json` surviving redeploys — use **env-only** config on Railway (`RAILWAY_ENVIRONMENT` is set automatically, or set `MAILCLAW_CONFIG_SOURCE=env`).
+4. After deploy, open your service **public URL** (or generate a domain in Railway) and check: **`GET /health`** → `{"status":"ok","bot":"running"}` once the Telegram bot has finished starting.
+
+[![Deploy on Railway](https://img.shields.io/static/v1?label=Deploy&message=Railway&color=0B0D0E&style=for-the-badge&logo=railway&logoColor=white)](https://railway.app/new)
+
+*If the graphic above fails to load, use the link: **[railway.app/new](https://railway.app/new)** → Deploy from GitHub.*
 
 ### Config mode: env-only vs local files
 
@@ -364,12 +368,23 @@ Same brain as **`mailclaw ask`** — see **[Examples galore](#examples-galore)**
 
 ## License
 
-**Proprietary — all rights reserved.** This repository is public **for reference only**.  
-**No use, copying, modification, distribution, or commercial use is permitted** without a **written commercial license** from the copyright holder.
+**Copyright © 2026 Crewcharge Technologies Private Limited and Foxwell & Pierce Group Inc.** See **[`LICENSE`](LICENSE)** for the full legal text.
 
-See [`LICENSE`](LICENSE) for full terms.
+### Who can use Mailclaw (simple version)
 
-Copyright © 2026 Crewcharge Technologies Private Limited and Foxwell & Pierce Group Inc.
+| Tier | Who | Cost |
+|:---|:---|:---|
+| **Hobby / personal** | Non-commercial, personal learning & experiments | **Free** |
+| **Small agency / lean team** | Agency or business with **under USD $5K MRR** (monthly recurring revenue), using Mailclaw for your own ops | **Free** |
+| **Everyone else (commercial)** | Larger agencies, resale, embedding Mailclaw in a product for customers, or revenue **≥ USD $5K MRR** | **Commercial license** — book a call to align terms |
+
+**Commercial license & questions:** **[Book a call → inboxpirates.com/cal](https://inboxpirates.com/cal)** · **[inboxpiratesconsulting.com](https://inboxpiratesconsulting.com)**
+
+The full **`LICENSE`** file is binding; this table is a **summary** only. When in doubt, book a call.
+
+---
+
+**Proprietary software.** All use is governed by **[`LICENSE`](LICENSE)**. Commercial use beyond the free tiers above requires a **written commercial license** — start at **[inboxpirates.com/cal](https://inboxpirates.com/cal)**.
 
 ---
 
