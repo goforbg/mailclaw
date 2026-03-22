@@ -3083,7 +3083,8 @@ _ANALYTICS_AI_FAIL_SNARK = [
     "❌ The model is on strike. Negotiate with logs, not me. Logs.",
 ]
 
-# Giphy CDN GIFs (Parks & Recreation / Ron Swanson vibes) — HTTPS, works with Telegram sendAnimation.
+# Giphy CDN GIFs (Parks & Recreation / Ron Swanson vibes) — HTTPS; Telegram sendAnimation.
+# All media.giphy.com URLs below were HEAD-checked (HTTP 200) — 2026-03.
 # Captions are original Mailclaw lines, not show dialogue.
 _RON_TG_ANIMATIONS: List[Tuple[str, str]] = [
     ("https://media.giphy.com/media/26gsobowozGM9umBi/giphy.gif", "Acceptable."),
@@ -3103,6 +3104,30 @@ _RON_TG_ANIMATIONS: List[Tuple[str, str]] = [
     ("https://media.giphy.com/media/3o7abldj0b3rxrZUxW/giphy.gif", "Fine. Next."),
     ("https://media.giphy.com/media/3o7btZ0t7Btg787ZNu/giphy.gif", "Ask again when you've had protein."),
     ("https://media.giphy.com/media/13CoXDiaCcCoyk/giphy.gif", "Hmm. Still better than a webinar."),
+    ("https://media.giphy.com/media/w0MYyUAvYCS64/giphy.gif", "That'll do."),
+    ("https://media.giphy.com/media/sDjIG2QtbXKta/giphy.gif", "Report received. Try not to ruin the rest of your day."),
+    ("https://media.giphy.com/media/Bt6sFgFhXlCWQ/giphy.gif", "Analytics: a civilized substitute for screaming."),
+    ("https://media.giphy.com/media/Xj1GHC7mXPquY/giphy.gif", "I regret nothing. Except maybe your subject line."),
+    ("https://media.giphy.com/media/HteV6g0QTNxp6/giphy.gif", "Sturdy. Unlike your open rate excuses."),
+    ("https://media.giphy.com/media/bm3ud11tTzKXGkTtzE/giphy.gif", "The numbers are in. Pace yourself."),
+    ("https://media.giphy.com/media/9JnG5uvAmY3vmniSnC/giphy.gif", "Please. And thank you. Now go fix your pipeline."),
+    ("https://media.giphy.com/media/m9Lzkhf0YsRgI/giphy.gif", "If that was strategy, I've seen sharper spoons."),
+    ("https://media.giphy.com/media/44b1ABtsG7VTy/giphy.gif", "Calm down. The spreadsheet is already judging you."),
+    ("https://media.giphy.com/media/xkqTRFkgzKPF6/giphy.gif", "You asked. I answered. Democracy loses again."),
+    ("https://media.giphy.com/media/qeAVCeUwLavsP6JD61/giphy.gif", "Celebrate quietly. People are watching."),
+    ("https://media.giphy.com/media/DRNHiOI54DlW3MBO30/giphy.gif", "Another win for discipline and denominators."),
+    ("https://media.giphy.com/media/ktcUyw6mBlMVa/giphy.gif", "The machine did its job. You do yours."),
+    ("https://media.giphy.com/media/wVcNP3TnXbl84/giphy.gif", "That's the look of someone who finally checked /help."),
+    ("https://media.giphy.com/media/iOz3p2txHIo4U/giphy.gif", "Rare moment of joy. Don't get used to it."),
+    ("https://media.giphy.com/media/OL4LjUYS2UlMSYehkH/giphy.gif", "Season's over. Your metrics aren't."),
+    ("https://media.giphy.com/media/nzF8sk5WWEDv50Pl41/giphy.gif", "File that under: acceptable."),
+    ("https://media.giphy.com/media/OJwXR5ynhJ5RYZSjFJ/giphy.gif", "End of transmission. Go touch grass."),
+    ("https://media.giphy.com/media/Y7SeP7arJWBZ6/giphy.gif", "Brief nod of approval. Don't tell anyone."),
+    ("https://media.giphy.com/media/WdxgDkavCuY56Of9jq/giphy.gif", "The chart is honest. The rest is up to you."),
+    ("https://media.giphy.com/media/IdmfEtnMWPzOg/giphy.gif", "I'm ignoring you rhetorically. The data isn't."),
+    ("https://media.giphy.com/media/4qY3r5eal0xH2/giphy.gif", "Still life. Still better than your last campaign."),
+    ("https://media.giphy.com/media/BPRD7M5UJoOg8/giphy.gif", "Solid. Now stop refreshing and start sending."),
+    ("https://media.giphy.com/media/o5IxfV1v8oU1vZUeZA/giphy.gif", "Peacock's got the show. You've got the numbers."),
 ]
 
 # Unknown slash command: rotate through what Mailclaw does (not analytics-only). Plain text.
