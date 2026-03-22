@@ -103,7 +103,22 @@ GEMINI_BASE    = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # Usage:  python mailclaw.py verify --debug
 log = logging.getLogger("mailclaw")
 log.setLevel(logging.DEBUG)
-log.addHandler(logging.NullHandler())   # NullHandler = zero output unless --debug
+log.addHandler(logging.NullHandler())   # NullHandler = zero output unless --debug / stream below
+
+def _configure_stdio_logging():
+    """Railway and Docker: emit INFO+ to stderr so deploy logs show config / analytics breadcrumbs."""
+    if os.environ.get("MAILCLAW_LOG_STDERR") == "0":
+        return
+    if not (os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("MAILCLAW_LOG_STDERR") == "1"):
+        return
+    if any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.NullHandler) for h in log.handlers):
+        return
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setLevel(logging.INFO)
+    sh.setFormatter(logging.Formatter("%(levelname)s [mailclaw] %(message)s"))
+    log.addHandler(sh)
+
+_configure_stdio_logging()
 
 def _enable_debug_logging():
     """Attach a rotating file handler to the logger. Called once by main() if --debug set."""
@@ -157,6 +172,7 @@ DEFAULT_CONFIG = {
     "instantly_clients":      [],
     "model_keys":             {"anthropic":"","gemini":"","openai":""},
     "model_key_pools":        {},  # optional: provider -> [api_key, ...] for rotation
+    "model_key_pools_by_client": {},  # client_slug -> {provider: [keys]}
     "telegram_token":         "",
     "telegram_allowed_users": [],
     "daily_limit":            2000,
@@ -199,6 +215,64 @@ def _apply_model_key_pools(c: dict) -> None:
         mk = c["model_keys"].get(prov, "").strip()
         if mk and prov not in c["model_key_pools"]:
             c["model_key_pools"][prov] = [mk]
+
+def _client_env_prefix(client_name: str) -> str:
+    """
+    Instantly client name 'will' → 'WILL'; 'gd-team' → 'GD_TEAM'.
+    Used for per-client env vars: WILL_GEMINI_API_KEY, WILL_OPENAI_API_KEY_2, …
+    """
+    s = re.sub(r"[^a-zA-Z0-9]+", "_", (client_name or "").strip()).strip("_")
+    return s.upper() or "CLIENT"
+
+def _env_numbered_strings_prefixed(prefix: str, base: str) -> List[str]:
+    """PREFIX_GEMINI_API_KEY, PREFIX_GEMINI_API_KEY_2, … (PREFIX e.g. WILL)."""
+    pfx = f"{prefix}_" if prefix else ""
+    out: List[str] = []
+    v = os.environ.get(f"{pfx}{base}", "").strip()
+    if v:
+        out.append(v)
+    i = 2
+    while i <= 64:
+        v = os.environ.get(f"{pfx}{base}_{i}", "").strip()
+        if not v:
+            break
+        out.append(v)
+        i += 1
+    return out
+
+def _merge_client_prefixed_pools(c: dict) -> None:
+    """
+    For each Instantly client, load optional AI keys:
+      <PREFIX>_GEMINI_API_KEY (or GOOGLE_API_KEY), _2, _3…
+      <PREFIX>_OPENAI_API_KEY, …
+      <PREFIX>_ANTHROPIC_API_KEY, …
+    PREFIX = uppercased client name (see _client_env_prefix).
+    When set, these override global rotation for that client only.
+    """
+    c.setdefault("model_key_pools_by_client", {})
+    for cl in c.get("instantly_clients") or []:
+        nm = cl.get("name") or ""
+        slug = nm.lower().strip()
+        if not slug:
+            continue
+        prefix = _client_env_prefix(nm)
+        gem = _env_numbered_strings_prefixed(prefix, "GEMINI_API_KEY") or _env_numbered_strings_prefixed(prefix, "GOOGLE_API_KEY")
+        ant = _env_numbered_strings_prefixed(prefix, "ANTHROPIC_API_KEY")
+        opn = _env_numbered_strings_prefixed(prefix, "OPENAI_API_KEY")
+        if not (gem or ant or opn):
+            continue
+        entry: Dict[str, List[str]] = {}
+        if gem:
+            entry["gemini"] = gem
+        if ant:
+            entry["anthropic"] = ant
+        if opn:
+            entry["openai"] = opn
+        c["model_key_pools_by_client"][slug] = entry
+        log.debug(
+            "mailclaw config: client=%r prefix=%s AI keys gemini=%d anthropic=%d openai=%d",
+            slug, prefix, len(gem), len(ant), len(opn),
+        )
 
 def _cfg_from_env() -> dict:
     """Full config from environment only (Railway / Docker). No JSON files."""
@@ -257,6 +331,8 @@ def _cfg_from_env() -> dict:
         pool = c.get("model_key_pools", {}).get(prov, [])
         if pool:
             c["model_keys"][prov] = pool[0]
+    _merge_client_prefixed_pools(c)
+    log.debug("cfg_load: env-only merged %d client-specific AI pool(s)", len(c.get("model_key_pools_by_client") or {}))
     return c
 
 def cfg_load() -> dict:
@@ -270,6 +346,7 @@ def cfg_load() -> dict:
         c.setdefault(k, v)
     c.setdefault("model_keys", {})
     c.setdefault("model_key_pools", {})
+    c.setdefault("model_key_pools_by_client", {})
     for mk in ["anthropic", "gemini", "openai"]:
         c["model_keys"].setdefault(mk, "")
 
@@ -337,6 +414,8 @@ def cfg_load() -> dict:
                     except Exception:
                         pass
 
+    _merge_client_prefixed_pools(c)
+    log.debug("cfg_load: file mode merged %d client-specific AI pool(s)", len(c.get("model_key_pools_by_client") or {}))
     return c
 
 def cfg_save(c: dict):
@@ -344,6 +423,18 @@ def cfg_save(c: dict):
         log.debug("cfg_save skipped (env-only config)")
         return
     CONFIG_FILE.write_text(json.dumps(c, indent=2))
+
+def get_instantly_client_entry(c: dict, name: str) -> Optional[dict]:
+    """Resolve INSTANTLY_CLIENT_* entry by client name (case-insensitive)."""
+    if not (name or "").strip():
+        return None
+    nl = name.lower().strip()
+    for cl in c.get("instantly_clients") or []:
+        if (cl.get("name") or "").lower() == nl:
+            log.debug("instantly client resolved: name=%r", cl.get("name"))
+            return cl
+    log.debug("instantly client not found: name=%r", name)
+    return None
 
 def hist_load() -> dict:
     global _memory_history
@@ -424,6 +515,8 @@ PROFILE_TEMPLATE = {
     "name": "generic",
     "display_name": "Generic B2B",
     "description": "Generic cold email enrichment profile.",
+    # Optional: Instantly client name slug — use this client's prefixed AI keys (WILL_* env vars)
+    "ai_client": None,
     # Models
     "enrichment_model": "gemini/gemini-2.5-flash-lite",
     "copy_model":       "anthropic/claude-haiku-4-5",
@@ -579,21 +672,57 @@ MODELS: Dict[str, dict] = {
         "provider":"openai","model_id":"gpt-4o",
         "cost_in":2.50,"cost_out":10.00,"label":"GPT-4o ($2.50/$10 per 1M tokens)"},
 }
-_ai_clients: Dict[Tuple[str, str], Any] = {}
+_ai_clients: Dict[Tuple[str, str, str], Any] = {}
 _ai_provider_rr: Dict[str, int] = {}
 
-def _pick_api_key_for_provider(c: dict, prov: str) -> str:
+def _ai_rr_scope_key(prov: str, client_slug: Optional[str]) -> str:
+    """Separate round-robin state per (provider × client scope)."""
+    return f"{prov}\t{(client_slug or '').lower() or '__global__'}"
+
+def _provider_has_keys(c: dict, prov: str, client_slug: Optional[str] = None) -> bool:
+    scope = (client_slug or "").strip().lower() or None
+    if scope:
+        byc = c.get("model_key_pools_by_client", {}).get(scope, {})
+        pl = [x for x in byc.get(prov, []) if x and str(x).strip()]
+        if pl:
+            return True
+    pool = [x for x in c.get("model_key_pools", {}).get(prov, []) if x and str(x).strip()]
+    if pool:
+        return True
+    return bool((c.get("model_keys") or {}).get(prov, ""))
+
+def _pick_api_key_for_provider(c: dict, prov: str, client_slug: Optional[str] = None) -> str:
+    scope = (client_slug or "").strip().lower() or None
+    if scope:
+        byc = c.get("model_key_pools_by_client", {}).get(scope, {})
+        pool = [x for x in byc.get(prov, []) if x and str(x).strip()]
+        if pool:
+            sk = _ai_rr_scope_key(prov, scope)
+            idx = _ai_provider_rr.get(sk, 0) % len(pool)
+            log.debug(
+                "AI key: provider=%s scope=client:%s idx=%d/%d tail=%s",
+                prov, scope, idx, len(pool), pool[idx][-4:] if pool[idx] else "?",
+            )
+            return pool[idx]
     pool = [x for x in c.get("model_key_pools", {}).get(prov, []) if x and str(x).strip()]
     if not pool:
         k = (c.get("model_keys") or {}).get(prov, "")
         pool = [k] if k else []
     if not pool:
+        log.debug("AI key: provider=%s scope=global — empty pool", prov)
         return ""
-    idx = _ai_provider_rr.get(prov, 0) % len(pool)
+    sk = _ai_rr_scope_key(prov, None)
+    idx = _ai_provider_rr.get(sk, 0) % len(pool)
+    log.debug(
+        "AI key: provider=%s scope=global idx=%d/%d tail=%s",
+        prov, idx, len(pool), pool[idx][-4:] if pool[idx] else "?",
+    )
     return pool[idx]
 
-def _bump_ai_provider(prov: str):
-    _ai_provider_rr[prov] = _ai_provider_rr.get(prov, 0) + 1
+def _bump_ai_provider(prov: str, client_slug: Optional[str] = None):
+    sk = _ai_rr_scope_key(prov, client_slug)
+    _ai_provider_rr[sk] = _ai_provider_rr.get(sk, 0) + 1
+    log.debug("AI key bump: %s", sk)
 
 def _invalidate_ai_clients_for_model(model_key: str):
     for k in list(_ai_clients.keys()):
@@ -607,16 +736,18 @@ def ai_cost(model_key:str,t_in:int,t_out:int)->float:
 def ai_cost_est(model_key:str,n:int,avg_in:int=450,avg_out:int=250)->float:
     return ai_cost(model_key,n*avg_in,n*avg_out)
 
-def _get_ai_client(model_key: str):
+def _get_ai_client(model_key: str, client_slug: Optional[str] = None):
     c = cfg_load()
     m = MODELS.get(model_key, {})
     prov = m.get("provider", "")
-    api_key = _pick_api_key_for_provider(c, prov)
+    api_key = _pick_api_key_for_provider(c, prov, client_slug)
     if not api_key:
         raise ValueError(f"No API key configured for provider '{prov}' (model {model_key})")
-    ck = (model_key, api_key)
+    scope_tag = (client_slug.strip().lower() if client_slug else "") or "__global__"
+    ck = (model_key, api_key, scope_tag)
     if ck in _ai_clients:
         return _ai_clients[ck]
+    log.debug("AI client construct: model=%s scope=%s provider=%s", model_key, scope_tag, prov)
     if prov == "gemini":
         from openai import OpenAI
         cl = OpenAI(api_key=api_key, base_url=GEMINI_BASE)
@@ -631,8 +762,9 @@ def _get_ai_client(model_key: str):
     _ai_clients[ck] = cl
     return cl
 
-def ai_call(model_key:str,system:str,user:str,
-            max_tokens:int=500,temperature:float=0.5)->Tuple[str,int,int]:
+def ai_call(model_key: str, system: str, user: str,
+            max_tokens: int = 500, temperature: float = 0.5,
+            client_slug: Optional[str] = None) -> Tuple[str, int, int]:
     """
     Calls an AI model and returns (text, tokens_in, tokens_out).
     Retries up to 3 times with exponential backoff on any exception.
@@ -649,10 +781,12 @@ def ai_call(model_key:str,system:str,user:str,
     m = MODELS[model_key]
     prov = m["provider"]
     mid = m["model_id"]
-    log.debug("ai_call model=%s provider=%s max_tokens=%d temp=%.2f user_preview=%r",
-              model_key, prov, max_tokens, temperature, user[:80])
+    log.debug(
+        "ai_call model=%s provider=%s client_slug=%s max_tokens=%d temp=%.2f user_preview=%r",
+        model_key, prov, client_slug or "", max_tokens, temperature, user[:80],
+    )
     for attempt in range(3):
-        cl = _get_ai_client(model_key)
+        cl = _get_ai_client(model_key, client_slug)
         try:
             if prov == "anthropic":
                 import anthropic as _ant
@@ -672,7 +806,7 @@ def ai_call(model_key:str,system:str,user:str,
             return text, t_in, t_out
         except Exception as e:
             log.warning("ai_call attempt %d/%d failed: %s", attempt + 1, 3, e)
-            _bump_ai_provider(prov)
+            _bump_ai_provider(prov, client_slug)
             _invalidate_ai_clients_for_model(model_key)
             if attempt == 2:
                 raise
@@ -683,19 +817,16 @@ def parse_json(text:str)->dict:
     text=re.sub(r"```[a-z]*","",text).strip().strip("`").strip()
     return json.loads(text)
 
-def cheapest_available_model()->Optional[str]:
+def cheapest_available_model(client_slug: Optional[str] = None) -> Optional[str]:
     c = cfg_load()
-    keys = c.get("model_keys", {})
     order = ["gemini/gemini-2.5-flash-lite", "gemini/gemini-2.0-flash",
              "openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"]
     for mk in order:
         if mk not in MODELS:
             continue
         prov = MODELS[mk]["provider"]
-        pool = [x for x in c.get("model_key_pools", {}).get(prov, []) if x and str(x).strip()]
-        if pool:
-            return mk
-        if keys.get(prov, ""):
+        if _provider_has_keys(c, prov, client_slug):
+            log.debug("cheapest_available_model → %s (client_slug=%r)", mk, client_slug)
             return mk
     return None
 
@@ -1152,11 +1283,15 @@ def _enrich_one(row:dict,profile:dict)->Tuple[dict,float]:
     em_key=profile.get("enrichment_model","gemini/gemini-2.5-flash-lite")
     cp_key=profile.get("copy_model","anthropic/claude-haiku-4-5")
     cost=0.0; result={}
+    _slug = (profile.get("ai_client") or "").strip().lower() or None
+    if _slug:
+        log.debug("enrich: using ai_client=%r for AI key pools", _slug)
 
     text,t_in,t_out=ai_call(em_key,profile["enrichment_system_prompt"],
                              _build_enrich_input(row,profile),
                              max_tokens=profile.get("enrichment_max_tokens",400),
-                             temperature=profile.get("enrichment_temperature",0.3))
+                             temperature=profile.get("enrichment_temperature",0.3),
+                             client_slug=_slug)
     enr=parse_json(text); cost+=ai_cost(em_key,t_in,t_out)
     for f in profile.get("enrichment_output_fields",[]): result[f]=enr.get(f,"")
 
@@ -1173,7 +1308,8 @@ def _enrich_one(row:dict,profile:dict)->Tuple[dict,float]:
                 f"CTA (append after each email body, NOT inside body): {cta}")
         cp_text,cp_in,cp_out=ai_call(cp_key,profile["copy_system_prompt"],user_p,
                                       max_tokens=profile.get("copy_max_tokens",600),
-                                      temperature=profile.get("copy_temperature",1.0))
+                                      temperature=profile.get("copy_temperature",1.0),
+                                      client_slug=_slug)
         cost+=ai_cost(cp_key,cp_in,cp_out); cp=parse_json(cp_text)
         for f in profile.get("copy_output_fields",[]): result[f]=cp.get(f,cp.get(f.replace(".","_"),""))
         # Assemble Instantly line columns
@@ -2783,7 +2919,7 @@ ASK_SYSTEM   = """You are Mailclaw, a cold email analytics assistant for an agen
 You answer questions about campaign performance using real data provided to you.
 Be concise, precise with numbers, and helpful. Format numbers with commas."""
 
-def _parse_dates(question:str)->Tuple[str,str]:
+def _parse_dates(question: str, client_slug: Optional[str] = None) -> Tuple[str, str]:
     """Ask Gemini to extract start/end dates from a natural language question."""
     from datetime import date, timedelta
     today=date.today()
@@ -2806,7 +2942,8 @@ def _parse_dates(question:str)->Tuple[str,str]:
             f"this month={this_mo_start} to {today}\n"
             f"Question: {question}")
     try:
-        txt,_,_=ai_call(ASK_MODEL,"Return only JSON.",prompt,max_tokens=50,temperature=0)
+        txt, _, _ = ai_call(ASK_MODEL, "Return only JSON.", prompt, max_tokens=50, temperature=0,
+                            client_slug=client_slug)
         import json as _j
         txt=txt.strip().strip('`'); 
         if txt.lower().startswith('json'): txt=txt[4:].strip()
@@ -2824,8 +2961,6 @@ def analytics_ask(question:str, profile_name:str=None)->str:
     from datetime import date
     import json as _j
     c=cfg_load()
-    if not c.get("model_keys",{}).get("gemini"):
-        return "❌ No Gemini API key. Run: mailclaw config"
 
     # Resolve profile
     all_p=analytics_profiles_all()
@@ -2837,19 +2972,26 @@ def analytics_ask(question:str, profile_name:str=None)->str:
         return f"❌ Profile '{pname}' not found. Available: {', '.join(all_p.keys())}"
 
     client_name=(prof.get("client_name") or (prof.get("client_names") or [""])[0])
-    clients=c.get("instantly_clients",{})
-    cfg_=(clients.get(client_name) or
-          next((v for k,v in clients.items() if k.lower()==client_name.lower()),None))
-    if not cfg_:
-        return f"❌ Instantly client '{client_name}' not found."
+    client_slug=(client_name or "").strip().lower() or None
+    log.info("analytics_ask: profile=%r client_name=%r client_slug=%r", pname, client_name, client_slug)
+
+    if not _provider_has_keys(c, "gemini", client_slug):
+        return ("❌ No Gemini API key for this profile. Set GEMINI_API_KEY (global) or "
+                f"{(_client_env_prefix(client_name) + '_GEMINI_API_KEY') if client_name else 'CLIENT_GEMINI_API_KEY'} "
+                "for this Instantly client — see README / docs/CLIENT_ENV.md")
+
+    cfg_meta=get_instantly_client_entry(c, client_name)
+    if not cfg_meta:
+        return f"❌ Instantly client '{client_name}' not found. Add INSTANTLY_CLIENT_<NAME> in env or config."
 
     # Parse date range from question
-    start_date,end_date=_parse_dates(question)
+    start_date,end_date=_parse_dates(question, client_slug=client_slug)
     dr_label=f"{start_date} → {end_date}" if (start_date or end_date) else "all time"
 
     try:
-        inst=InstantlyClient(cfg_["api_key"])
-        camps=inst.list_campaigns()
+        inst=Instantly(cfg_meta["key"], cfg_meta.get("name",""), c.get("rate_limit_delay", 0.12))
+        camps=inst.list_all_campaigns()
+        log.debug("analytics_ask: campaigns fetched count=%d", len(camps))
         nf=prof.get("campaign_name_filter","")
         if nf: camps=[c_ for c_ in camps if nf.lower() in c_.get("name","").lower()]
 
@@ -2918,7 +3060,8 @@ def analytics_ask(question:str, profile_name:str=None)->str:
 
         answer,_,_=ai_call(ASK_MODEL,ASK_SYSTEM,
                            f"Data:\n{ctx}\n\nQuestion: {question}",
-                           max_tokens=350,temperature=0.3)
+                           max_tokens=350,temperature=0.3,
+                           client_slug=client_slug)
         return answer.strip()
     except Exception as e:
         log.exception("analytics_ask")
@@ -2945,6 +3088,10 @@ def cmd_ask(args):
 
 
 def cmd_bot(_args):
+    if use_env_config():
+        log.info("mailclaw bot: env-only config (no persistent ~/.mailclaw JSON on disk)")
+    else:
+        log.debug("mailclaw bot: config file mode → %s", CONFIG_FILE)
     # Bind HTTP first: Railway healthchecks /health immediately; Telegram imports + Application.build()
     # can take several seconds on a cold container.
     from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -3155,7 +3302,7 @@ def cmd_bot(_args):
 
         try:
             inst2=Instantly(client_meta["key"],client_meta["name"],0.12)
-            all_camps=inst2.list_campaigns()
+            all_camps=inst2.list_all_campaigns()
             name_filter=prof.get("campaign_name_filter","")
             if name_filter:
                 all_camps=[c_ for c_ in all_camps if name_filter.lower() in c_.get("name","").lower()]
@@ -4675,6 +4822,11 @@ def cmd_analytics_profiles(_args):
             console.print(f"[green]✓[/] Deleted: {rm}")
 
 def main():
+    if use_env_config():
+        log.info("mailclaw: env-only config (no ~/.mailclaw JSON); RAILWAY_ENVIRONMENT=%r",
+                 os.environ.get("RAILWAY_ENVIRONMENT", ""))
+    else:
+        log.debug("mailclaw: config file mode → %s", CONFIG_FILE)
     console.print(LOGO)
     console.rule(style="dim yellow")
     p=argparse.ArgumentParser(prog="mailclaw",add_help=True,

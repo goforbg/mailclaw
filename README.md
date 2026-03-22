@@ -110,46 +110,70 @@ Time period:
 
 No Redis or MongoDB is required. If you later need durable verification history across restarts, add a small Redis (e.g. Upstash) — not bundled in this repo.
 
-### Multi-client agencies (Instantly + Reoon + AI)
+On Railway, **INFO** logs (config mode, `analytics_ask` client resolution, AI key scope) go to the deploy log automatically. Set `MAILCLAW_LOG_STDERR=0` to silence them.
 
-- **Instantly — one workspace API key per end client**
+### Multi-client agencies (simple prefix rule)
+
+**Full reference:** [docs/CLIENT_ENV.md](docs/CLIENT_ENV.md)
+
+- **Instantly — exactly one API key per client** (each client’s workspace):
 
   ```bash
-  INSTANTLY_CLIENT_ACME=sk_xxx
+  INSTANTLY_CLIENT_WILL=sk_xxx
   INSTANTLY_CLIENT_GD=sk_yyy
   ```
 
-  The suffix (`ACME`, `GD`) becomes the internal client name (lowercased). Use the same name in analytics profile JSON as `client_name`.
+  The suffix (`WILL`, `GD`) becomes the internal client name (`will`, `gd`). Use that string in analytics profile JSON as `client_name`.
 
-- **Reoon — multiple verifier accounts**
+- **AI keys — global and/or per client**
 
-  ```bash
-  REOON_KEY=first_key
-  REOON_KEY_1=second_key
-  REOON_KEY_1_NAME=team_b
-  ```
-
-  Keys rotate by daily usage; live Reoon balance API stays the source of truth.
-
-- **OpenAI / Gemini / Anthropic — multiple keys (retry rotates)**
+  - **Global** (fallback for any client): `GEMINI_API_KEY`, `GEMINI_API_KEY_2`, `OPENAI_API_KEY`, …
+  - **Per client** — same names with a **prefix** derived from the Instantly client name (uppercase, non-alphanumerics → `_`):
 
   ```bash
-  OPENAI_API_KEY=sk_primary
-  OPENAI_API_KEY_2=sk_backup
-  GEMINI_API_KEY=AIza...
-  GEMINI_API_KEY_2=...
-  ANTHROPIC_API_KEY=sk-ant-...
+  # Client WILL: three Gemini keys in rotation, one OpenAI
+  WILL_GEMINI_API_KEY=AIza_first
+  WILL_GEMINI_API_KEY_2=AIza_second
+  WILL_GEMINI_API_KEY_3=AIza_third
+  WILL_OPENAI_API_KEY=sk_will
+
+  # Client GD: its own keys (optional)
+  GD_GEMINI_API_KEY=AIza_gd
   ```
 
-- **Analytics profiles on Railway** — store JSON in env (no file path):
+  When you run `/analytics will` (or `analytics_ask` for that profile), Mailclaw uses **`WILL_*` keys** if set; otherwise **global** `GEMINI_*` / `OPENAI_*`.
+
+- **Reoon** — usually **shared** across clients (global pool):
 
   ```bash
-  ANALYTICS_PROFILE_WILL='{"name":"will","client_name":"acme","benchmarks":{...},"campaign_name_filter":""}'
+  REOON_KEY=...
+  REOON_KEY_1=...
+  REOON_KEY_1_NAME=backup
   ```
 
-  List profiles in Telegram: `/analytics` — names come from `ANALYTICS_PROFILE_<NAME>` and optional `~/.mailclaw/analytics/*.json` when not env-only.
+- **Analytics profiles on Railway** — JSON in env; `client_name` must match an `INSTANTLY_CLIENT_*` suffix:
 
-Copy `.env.example` for the full variable list.
+  ```bash
+  ANALYTICS_PROFILE_WILL='{"name":"will","client_name":"will","benchmarks":{...},"campaign_name_filter":""}'
+  ```
+
+### Railway copy-paste sample (two clients + bot)
+
+Minimal variables so deploy succeeds (replace placeholders):
+
+```bash
+TELEGRAM_TOKEN=123456:ABC...
+INSTANTLY_CLIENT_WILL=sk_replace
+INSTANTLY_CLIENT_GD=sk_replace
+GEMINI_API_KEY=AIza_replace
+WILL_GEMINI_API_KEY=AIza_replace
+WILL_GEMINI_API_KEY_2=AIza_replace
+GD_GEMINI_API_KEY=AIza_replace
+REOON_KEY=reoon_replace
+ANALYTICS_PROFILE_WILL={"name":"will","client_name":"will","benchmarks":{},"campaign_name_filter":""}
+```
+
+Copy `.env.example` for more options.
 
 ---
 
