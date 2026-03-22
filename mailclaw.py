@@ -2918,6 +2918,8 @@ ASK_MODEL    = "gemini/gemini-2.5-flash"
 ASK_SYSTEM   = """You are Mailclaw, a cold email analytics assistant for an agency.
 You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
 
+If the Period line says "this month (… default)" the user did not name a date range — metrics are **month-to-date** (1st → today). If they asked for "all time", Period will say "all time".
+
 DEFINITIONS (rates use unique leads contacted = Email 1 / step 0 in the period, per campaign):
 - human_reply_rate: human_replies / leads (unique human replies ÷ unique leads contacted). In BY_CAMPAIGN as human_reply_rate (0–1) and human_reply_rate_pct.
 - total_reply_rate (incl. auto/OOO): (human_replies + auto_replies) / leads — fields total_reply_rate and total_reply_rate_pct.
@@ -2937,6 +2939,14 @@ The data includes LEAD_ROWS: real Instantly CRM leads (email, status, campaign, 
 When the user asks for lists, emails, or names, answer from LEAD_ROWS only — never invent addresses.
 If the list is truncated, say how many rows were shown vs total matched.
 Date filters on lead rows use CRM last_updated (when status was last changed)."""
+
+# Occasional footers appended to analytics replies (Telegram + CLI); keep under ~280 chars each.
+_ASK_SNARK_FOOTERS = [
+    "\n\n— If that stung, @goforbg built this. inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Still pivot-tabling at 11pm? @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Numbers don’t lie; spreadsheets do. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— That’s enough math for one day. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+]
 
 
 def _ask_export_intent(question: str) -> str:
@@ -3018,6 +3028,25 @@ def _parse_dates_fallback(question: str) -> Tuple[str, str]:
         last_start = last_end.replace(day=1)
         return last_start.isoformat(), last_end.isoformat()
     return "", ""
+
+
+def _wants_all_time(question: str) -> bool:
+    """User explicitly asked for lifetime / all-time metrics (skip default this-month window)."""
+    ql = question.lower()
+    return any(
+        p in ql
+        for p in (
+            "all time",
+            "all-time",
+            "alltime",
+            "lifetime",
+            "full history",
+            "entire history",
+            "ever since",
+            "since we started",
+            "since launch",
+        )
+    )
 
 
 def _ask_lead_list_intent(question: str) -> Optional[dict]:
@@ -3183,7 +3212,30 @@ def analytics_ask(
         start_date, end_date = s_fb, e_fb
     else:
         start_date, end_date = _parse_dates(question, client_slug=client_slug)
-    dr_label = f"{start_date} → {end_date}" if (start_date or end_date) else "all time"
+
+    date_defaulted_this_month = False
+    early_month_note = ""
+    if not (start_date or end_date) and not _wants_all_time(question):
+        t0 = date.today()
+        start_date = t0.replace(day=1).isoformat()
+        end_date = t0.isoformat()
+        date_defaulted_this_month = True
+        if t0.day <= 7:
+            from datetime import timedelta as _td
+            prev_end = t0.replace(day=1) - _td(days=1)
+            early_month_note = (
+                f"\n\n📅 Heads up: it’s early {t0.strftime('%B')} — numbers are month-to-date only (1st→today). "
+                f"Want a full prior month? Ask about last month or {prev_end.strftime('%B')}."
+            )
+
+    if not (start_date or end_date) and _wants_all_time(question):
+        dr_label = "all time"
+    elif date_defaulted_this_month:
+        dr_label = f"this month ({start_date} → {end_date}, default)"
+    elif start_date or end_date:
+        dr_label = f"{start_date} → {end_date}"
+    else:
+        dr_label = "all time"
     lead_intent = _ask_lead_list_intent(question)
     export_kind = _ask_export_intent(question)
     if force_export == "csv":
@@ -3380,6 +3432,11 @@ def analytics_ask(
                 client_slug=client_slug,
             )
             txt = answer.strip()
+            if early_month_note:
+                txt += early_month_note
+            import random as _rnd
+            if _rnd.random() < 0.36:
+                txt += _rnd.choice(_ASK_SNARK_FOOTERS)
         except Exception:
             log.exception("analytics_ask ai_call profile=%r", pname)
             return ("❌ AI could not complete this request (see server logs).", [])
@@ -3595,6 +3652,7 @@ def cmd_bot(_args):
     import random as _random
 
     SNARKY=[
+        "That command doesn’t exist — unlike your pipeline, which @goforbg actually wired up.",
         "Blimey, are you actually typing that on purpose?",
         "Right, so we're just pressing buttons at random now, are we?",
         "Cor blimey — that's not a command, that's a cry for help.",
@@ -3623,49 +3681,71 @@ def cmd_bot(_args):
         """Help text for /ask including optional profile and configured profile names."""
         ap = analytics_profiles_all()
         parts = [
-            "*Ask analytics*",
+            "*Ask analytics (live Instantly data)*",
             "",
-            "`/ask <question>` — uses the *default* profile (first configured).",
-            "`/ask <profile> <question>` — uses that analytics profile’s Instantly client + filters.",
+            "*Dates:* Say *this week*, *last month*, or a range. If you say nothing about time, Mailclaw uses *this month to date* (1st → today). Say *all time* for lifetime.",
             "",
-            "_Or send a normal message_ (same rules; optional first word = profile name).",
+            "`/ask <question>` — default analytics profile.",
+            "`/ask <profile> <question>` — that profile’s client + filters.",
+            "_Or plain text_ — optional first word = profile name.",
+            "",
+            "*Get files (CSV / Excel):* include words like *export csv*, *download excel*, or *spreadsheet* — or CLI `mailclaw ask --export csv`.",
             "",
         ]
         if ap:
             plist = "\n".join(f"• `{k}`" for k in sorted(ap.keys(), key=str.lower))
-            parts.append("*Profiles:*\n" + plist)
+            parts.append("*Your profiles:*\n" + plist)
         else:
             parts.append("_No profiles yet._ Set `ANALYTICS_PROFILE_*` or `mailclaw analytics-profiles`.")
         parts.extend([
             "",
-            "*Examples:*",
-            "`/ask how many meetings this week?`",
-            "`/ask will what was our reply rate last month?`",
+            "*Built by* @goforbg — *InboxPirates Consulting* (inboxpiratesconsulting.com) · *Tuco* iMessage (tuco.ai).",
         ])
         return "\n".join(parts)
+
+    def _tg_help_examples_markdown() -> str:
+        return (
+            "*Real-life examples* (copy, edit names)\n\n"
+            "• `/ask What was our human reply rate last week?`\n"
+            "• `/ask acme How many meetings booked *this month*?`\n"
+            "• `/ask Compare bounce rate March vs April — export csv`\n"
+            "• `/ask will Which campaigns drove the most opps *last quarter*?`\n"
+            "• `/ask Total emails sent *yesterday* and auto-replies`\n"
+            "• `how many leads did we generate this week` _(no slash — same engine)_\n"
+            "• `will export excel — pipeline for March` _(profile + file)_\n\n"
+            "*Full report (not AI chat):*\n"
+            "`/analytics` → pick profile + dates · Excel attached when generated.\n\n"
+            "*Credits:* `/balance` · *CSV verify:* drop a `.csv` file.\n\n"
+            "_Commercial setup / white-glove:_ inboxpiratesconsulting.com · "
+            "_iMessage automation:_ tuco.ai · _Author:_ @goforbg"
+        )
 
     async def start(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
-            "🍬 *Mailclaw*\n\n"
+            "🍬 *Mailclaw* — cold email ops from your pocket.\n\n"
             "*Commands:*\n"
             "/analytics — full report (lists profiles)\n"
-            "/analytics `will` — run a specific profile\n"
-            "/analytics `will 2026-03-01 2026-03-31` — with date range\n"
-            "/ask — natural-language analytics (`/ask` alone shows profile help)\n"
-            "/balance — Reoon verification credits\n"
-            "/help — show this again\n\n"
-            "*Quick ask (no slash):*\n"
-            "_how many meetings did we book this month?_\n"
-            "_will how many leads last week?_ _(profile first)_\n"
-            "_what meetings did we book this week — export csv_\n\n"
-            "📎 Drop a `.csv` → email verification",
+            "/analytics `will` — one profile\n"
+            "/analytics `will 2026-03-01 2026-03-31` — date range\n"
+            "/ask — AI analytics *(vague dates → this month to date; say “all time” if you mean ever)*\n"
+            "/balance — Reoon credits (live API)\n"
+            "/help — long-form examples + who built this\n\n"
+            "*Quick asks (no slash):*\n"
+            "_How many human replies Tuesday–Thursday last week?_\n"
+            "_acme What was our bounce % in Q1?_\n"
+            "_Download excel — full analytics last month_\n\n"
+            "📎 *Drop a* `.csv` → Reoon verify → safe / catchall splits\n\n"
+            "— *InboxPirates Consulting* · inboxpiratesconsulting.com\n"
+            "— *Tuco* (iMessage) · tuco.ai\n"
+            "— *@goforbg*",
             parse_mode="Markdown")
 
     async def help_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await start(u,ctx)
         await u.message.reply_text(_tg_ask_usage_markdown(), parse_mode="Markdown")
+        await u.message.reply_text(_tg_help_examples_markdown(), parse_mode="Markdown")
 
     async def unknown_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
@@ -3840,6 +3920,7 @@ def cmd_bot(_args):
             q = raw
         if not q:
             await u.message.reply_text(_tg_ask_usage_markdown(), parse_mode="Markdown")
+            await u.message.reply_text(_tg_help_examples_markdown(), parse_mode="Markdown")
             return
         if len(q) > TG_MAX_QUESTION_CHARS:
             await u.message.reply_text(f"❌ Question too long (max {TG_MAX_QUESTION_CHARS} characters).")
