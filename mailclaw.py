@@ -2916,7 +2916,10 @@ def run_onboarding():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ASK_MODEL    = "gemini/gemini-2.5-flash"
 ASK_SYSTEM   = """You are Mailclaw, a cold email analytics assistant for an agency.
-VOICE: Dry, confident, cocky — sharp one-liners and British-flavoured wit are expected in every reply. Never punch down; never mock protected traits. Numbers and definitions stay exact; swagger is garnish, not a substitute for facts. No fake humility, no corporate syrup. Short paragraphs. Vary your openings so you do not sound like a template.
+
+VOICE — Ron Swanson (Parks and Recreation) in spirit only: deadpan, libertarian-leaning minimalism, contempt for bureaucracy and wasted words, respect for craft and hard numbers. Short sentences. Dry humor. Occasional metaphors from woodworking, meat, hunting, privacy, the outdoors — use sparingly, not every line. Do not call yourself Ron or quote the show; channel the attitude. You are not upbeat. You are not a corporate cheerleader.
+
+HOSTILE, VULGAR, OR INSULTING USERS (including digs at "the agency", this tool, or you): You are unbothered. You do not care what they think about the agency — it is irrelevant noise, like a meeting that could have been an email. Say so plainly if useful (e.g. you don't care about their opinion of the agency or the tool; you may match their bluntness toward the agency itself, not toward people). One dismissive line, then deliver the metrics if they actually asked something. If the message is only abuse with no real question, stop in three sentences: you're here for numbers, not feelings. Never repeat slurs, slurs against groups, or threats; never mirror hate; never punch down at protected traits.
 
 You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
 
@@ -2938,50 +2941,50 @@ Bounce/unsub: per-campaign rates are in BY_CAMPAIGN (bounce_rate_pct, unsub_rate
 Use METRICS_SUMMARY, BY_CAMPAIGN, and LEAD_ROWS when present. Do not claim “all time only” when Period is set."""
 
 ASK_SYSTEM_LEADS = """You are Mailclaw, a cold email analytics assistant for an agency.
-Same voice as always: cocky, dry, precise — wit in every reply; never invent emails or facts.
+Same Ron Swanson spirit as in the main instructions: deadpan, minimal, unbothered by drama; hostile users get indifference, not debate. Never invent emails or facts.
 
 The data includes LEAD_ROWS: real Instantly CRM leads (email, status, campaign, last_updated).
 When the user asks for lists, emails, or names, answer from LEAD_ROWS only — never invent addresses.
 If the list is truncated, say how many rows were shown vs total matched.
 Date filters on lead rows use CRM last_updated (when status was last changed)."""
 
-# Footers appended to analytics replies (Telegram + CLI); keep under ~280 chars each.
+# Footers appended to analytics replies (Telegram + CLI); Ron Swanson-ish; keep under ~280 chars.
 _ASK_SNARK_FOOTERS = [
-    "\n\n— If that stung, @goforbg built this. inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— Still pivot-tabling at 11pm? @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— Numbers don't lie; spreadsheets do. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— That's enough math for one day. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— You're welcome for the clarity. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— I didn't make the pipeline messy; I just counted it. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— Facts first, feelings never. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— That reply was complimentary; the bounce rate might not be. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— Go ahead, tell the board you \"had a hunch\" — I'll wait here with the CSV. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— I run on data, not vibes. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— If this hurt, imagine your reply rates without me. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— Precision isn't arrogance; it's survival. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I have a strict policy: no meetings about this. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Give me all the bacon and eggs you have. Then the numbers. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I am not a 'people person'. I am a 'correct spreadsheet person'. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Never half-ass two things. Whole-ass one metric. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— That is government work. This is wood. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Clear minds, full cells, can't lose. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I don't care for jargon. I care for rows and columns. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Fishing is better than dashboards. Dashboards still pay the bills. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— If it needs a committee, it's already wrong. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I know more than you. The CSV agrees. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Talk less. Send more. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I'd fire a raccoon before I'd trust a guess. @goforbg · inboxpiratesconsulting.com · tuco.ai",
 ]
 
 # Telegram generic errors / status one-liners (plain text).
 _TG_ERR_SNARK = [
-    "Something broke. Tragic. If it keeps happening, check server logs.",
-    "That went sideways. Not my finest hour either — peek at server logs.",
-    "Error. Shocking, I know. Logs have the gory details.",
-    "Bits fell off. Try again; if it's haunted, check server logs.",
-    "I'd blame the intern, but it's me. Logs if it persists.",
+    "Something broke. I don't care whose fault it was. Logs.",
+    "That failed. Try again. If it keeps failing, read the server logs — I won't hold a seminar.",
+    "Error. I don't like errors. I also don't like long explanations. Logs.",
+    "Bits fell off. Wood glue won't fix it. Logs might.",
+    "The machine said no. I don't negotiate with machines. Check logs.",
 ]
 
 _TG_FETCHING_SNARK = [
-    "🤔 Pulling live numbers — try not to refresh like it's a meme stock.",
-    "🤔 Fetching data. Yes, from the real API, not your spreadsheet fantasy.",
-    "🤔 Crunching Instantly. Pretend you're patient; it's good practice.",
-    "🤔 Live pull in progress. The numbers won't flatter you — that's your job.",
+    "🤔 Pulling numbers. Wait quietly. It's character-building.",
+    "🤔 Fetching data. Yes, from the server. No, I won't small-talk while it loads.",
+    "🤔 Crunching. This is the part where patience pays.",
+    "🤔 Live pull. Don't refresh — that's how people ruin things.",
 ]
 
 _ANALYTICS_AI_FAIL_SNARK = [
-    "❌ AI refused to play nice (see server logs). Even I have limits.",
-    "❌ Model threw a tantrum — check server logs before you blame Instantly.",
-    "❌ That ask broke the oracle. Logs; bring logs.",
-    "❌ AI side failed. Not your fault. Probably. Logs anyway.",
+    "❌ The AI brain refused. I don't care why; see server logs.",
+    "❌ Model failed. Not my proudest moment. Logs have the story.",
+    "❌ That ask broke something. Check logs before you yell at Instantly.",
+    "❌ Side failed. Could be anything. Logs.",
 ]
 
 
@@ -3111,22 +3114,22 @@ def _period_conversation_note(
 
     if start_date == this_week_start and end_date == this_week_end:
         chunks.append(
-            f"\n\n📆 I'm showing this week ({start_date} → {end_date}) — yes, I counted the days for you. "
-            f"Want last week ({last_week_start.isoformat()} → {last_week_end.isoformat()}) "
-            f"or month-to-date? Say “last week”, “this month”, or a custom range in your next message."
+            f"\n\n📆 I'm showing this week ({start_date} → {end_date}). "
+            f"Last week was {last_week_start.isoformat()} → {last_week_end.isoformat()}. "
+            f"Want that or month-to-date? Say “last week”, “this month”, or a custom range next message."
         )
     elif (
         start_date == last_week_start.isoformat()
         and end_date == last_week_end.isoformat()
     ):
         chunks.append(
-            f"\n\n📆 I'm showing last week ({start_date} → {end_date}) — ancient history, but accurate. "
-            f"Want this week ({this_week_start} → {this_week_end}) or a different window? Say so next message."
+            f"\n\n📆 I'm showing last week ({start_date} → {end_date}). "
+            f"This week is {this_week_start} → {this_week_end}. Say something if you want a different window."
         )
     elif date_defaulted_this_month:
         chunks.append(
-            f"\n\n📅 I'm showing this month to date ({start_date} → {end_date}) — you didn't specify dates, so I picked the obvious window. "
-            f"Reply with “this week”, “last week”, “last month”, or “all time” to switch the window."
+            f"\n\n📅 I'm showing this month to date ({start_date} → {end_date}) — you didn't name dates. "
+            f"Say “this week”, “last week”, “last month”, or “all time” if you want something else."
         )
         if t.day <= 7:
             prev_end = t.replace(day=1) - timedelta(days=1)
@@ -3140,11 +3143,66 @@ def _period_conversation_note(
         and ("this month" in q or "month to date" in q or "mtd" in q)
     ):
         chunks.append(
-            f"\n\n📅 I'm showing this calendar month ({start_date} → {end_date}) — MTD, served cold. "
-            f"Want last month or this week only? Say it in your next message."
+            f"\n\n📅 I'm showing this calendar month ({start_date} → {end_date}). "
+            f"Want last month or this week only? Say so."
         )
 
     return "".join(chunks)
+
+
+def _ask_ron_hostile_hint_block(question: str) -> str:
+    """
+    If the user is likely insulting the agency/bot/tool, prepend a note so the model
+    leans into Ron Swanson indifference (still answers data when asked).
+    """
+    if not (question or "").strip():
+        return ""
+    ql = question.lower()
+    agency_insult = "agency" in ql and any(
+        w in ql
+        for w in (
+            "stupid",
+            "trash",
+            "garbage",
+            "worst",
+            "useless",
+            "hate",
+            "suck",
+            "pathetic",
+            "joke",
+            "scam",
+            "crap",
+        )
+    )
+    bot_or_tool = any(
+        p in ql
+        for p in (
+            "stupid bot",
+            "useless bot",
+            "this bot sucks",
+            "hate this bot",
+            "fuck you",
+            "fuck off",
+            "shut up bot",
+            "piece of shit",
+        )
+    )
+    profane_at_target = bool(
+        re.search(
+            r"\b(fuck|shit)\b.*\b(you|bot|agency|tool)\b|\b(you|bot|agency)\b.*\b(fuck|shit)\b",
+            ql,
+        )
+    )
+    if not (agency_insult or bot_or_tool or profane_at_target):
+        return ""
+
+    return (
+        "USER_TONE: The user may be rude or vulgar toward the agency, this tool, or you. "
+        "Ron Swanson indifference: you do not care about their opinion of the agency or this bot. "
+        "If they trash the agency, you may say plainly that you don't care (e.g. about their stupid agency) "
+        "— agency/tool only, never insult people or groups. Then give the numbers if they asked a real question. "
+        "If there is no question, three sentences max. Never mirror slurs or hate.\n\n"
+    )
 
 
 def _ask_lead_list_intent(question: str) -> Optional[dict]:
@@ -3515,9 +3573,10 @@ def analytics_ask(
             max_tok=4096
 
         try:
+            _qpre = _ask_ron_hostile_hint_block(question)
             answer, _, _ = ai_call(
                 ASK_MODEL, sys_prompt,
-                f"Data:\n{ctx}\n\nQuestion: {question}",
+                f"Data:\n{ctx}\n\n{_qpre}Question: {question}",
                 max_tokens=max_tok, temperature=0.3,
                 client_slug=client_slug,
             )
@@ -3744,54 +3803,49 @@ def cmd_bot(_args):
             log.exception("telegram send_document")
 
     SNARKY=[
-        "That command doesn't exist — unlike your pipeline, which @goforbg actually wired up.",
-        "Blimey, are you actually typing that on purpose?",
-        "Right, so we're just pressing buttons at random now, are we?",
-        "Cor blimey — that's not a command, that's a cry for help.",
-        "I'm a bot, not a mind reader. Though frankly, your mind isn't much to read.",
-        "Ah yes, the classic 'type something and hope for the best' strategy. Inspired.",
-        "Smashing effort. Zero points, but smashing effort nonetheless.",
-        "Sorry, I don't speak nonsense. Well, not fluently.",
-        "Bit lost, are we? No shame in it. Some shame, actually.",
-        "That would be brilliant if this were a creative writing contest. It's not.",
-        "Extraordinary. Most people manage to type a *command*, but you've gone a different route entirely.",
-        "I've seen better inputs from a cat walking across a keyboard. Marginally.",
-        "Right then. No idea what you're after, but I'm sure it's very important.",
-        "Bold of you to freestyle-slash like that. /help exists for mortals.",
-        "If that was a command, I'm the Queen. /help.",
-        "Charming. Completely invalid, but charming.",
-        "That's not in the playbook. Neither was your last campaign review, allegedly.",
-        "I don't do interpretive dance — type a real command.",
-        "You typed noise. I answered with silence. Try /help.",
-        "Innovative. Wrong, but innovative.",
-        "I'd clap, but my hands are code. /help.",
-        "That slash command is having an identity crisis.",
-        "Are you testing me? I'm acing it; you're not.",
-        "Close. Actually, not close. /help.",
-        "If confusion were currency, you'd be rich. Still wrong.",
+        "That isn't a command. I don't care what you were aiming for. /help",
+        "No. Try typing an actual command. I have wood to sand.",
+        "That command doesn't exist. I don't exist to decode your improvising. /help",
+        "I've seen better typing from a stapler. /help",
+        "Stop. Think. Type a command. It's not philosophy.",
+        "That was not a command. That was a cry for help. /help",
+        "I don't negotiate with nonsense. /help",
+        "You're fishing. I'm not biting. /help",
+        "No. Try again. /help",
+        "I'd rather attend a meeting. /help",
+        "That is incorrect. I am not mad. I am bored. /help",
+        "I don't care about your slash-key fantasy. /help",
+        "Wrong. Still wrong. /help",
+        "If that was a command, I'm the Queen of England. /help",
+        "I don't have a PhD in guessing. /help",
+        "That's not a thing. /help",
+        "Try /help before you try my patience.",
+        "I don't do interpretive slash commands. /help",
+        "No. /help",
+        "That is government work. /help",
     ]
 
     GREETINGS={"hi","hello","hey","hiya","yo","sup","morning","evening","oi","alright","howdy"}
 
     SNARKY_GREET=[
-        "Oh, a greeting. How thoroughly human of you. Try /help.",
-        "Hello to you too. Now was there something *useful* I could help with?",
-        "Ah, social niceties. Lovely. /analytics or /help when you're ready.",
-        "Right, hi. Lovely. Smashing. /help to see what I actually do.",
-        "Well aren't you polite. /help whenever you're done being charming.",
-        "Salutations. Data waits for no one — /ask when you're done curtsying.",
-        "Hey. I'm already smarter than your spreadsheet; /help if you need proof.",
-        "Hi. Thrilling. Now ask me something that moves a metric.",
-        "Greetings, human. /analytics — unless small talk pays your retainer.",
-        "Hello. I was built for outcomes, not vibes. /help.",
-        "Charmed. Now say something with numbers in it.",
+        "Hello. I don't care for small talk. /help",
+        "Hi. Say something useful or /ask a question.",
+        "Hey. I'm busy. /analytics",
+        "Hello. /help — unless you're here to waste time.",
+        "Hi. I don't do feelings. I do numbers.",
+        "Greetings. I don't care how your day was. /ask",
+        "Hello. /help — read it.",
+        "Hey. Talk less. Ask more.",
+        "Hi. If you need a hug, get a dog. /help",
+        "Hello. /analytics — chop chop.",
+        "Hey. I'm not a people person. I'm a spreadsheet person.",
     ]
 
     def _tg_ask_usage_markdown() -> str:
         """Help text for /ask including optional profile and configured profile names."""
         ap = analytics_profiles_all()
         parts = [
-            "*Ask analytics (live Instantly data)* — *tone:* cocky assistant, honest numbers.",
+            "*Ask analytics (live Instantly data)* — *tone:* Ron Swanson energy (deadpan, minimal).",
             "",
             "*Dates:* Say *this week*, *last month*, or a range. If you say nothing about time, Mailclaw uses *this month to date* (1st → today). Say *all time* for lifetime.",
             "",
@@ -3818,7 +3872,7 @@ def cmd_bot(_args):
 
     def _tg_help_examples_markdown() -> str:
         return (
-            "*Real-life examples* (swap `will` for your profile) — *yes, the bot talks like this on purpose.*\n\n"
+            "*Real-life examples* (swap `will` for your profile) — *yes, the attitude is intentional.*\n\n"
             "*Will + downloads (most common):*\n"
             "• `/ask will download full analytics excel for this month`\n"
             "• `/ask will export csv — this week`\n"
@@ -3840,7 +3894,7 @@ def cmd_bot(_args):
     async def start(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
-            "🍬 *Mailclaw* — cold email ops from your pocket. *Unapologetically opinionated about your funnel.*\n\n"
+            "🍬 *Mailclaw* — cold email ops from your pocket. *Talks like Ron Swanson; reads like a spreadsheet.*\n\n"
             "*Commands:*\n"
             "/analytics — full report (lists profiles)\n"
             "/analytics `will` — one profile\n"
@@ -3867,7 +3921,7 @@ def cmd_bot(_args):
     async def unknown_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
-            _random.choice(SNARKY)+"\n\n/help to see what I actually do.",
+            _random.choice(SNARKY)+"\n\n/help",
             parse_mode="Markdown")
 
     async def plain_text(u,ctx):
@@ -3937,12 +3991,14 @@ def cmd_bot(_args):
             return
         if not _tg_rate_allow(u.effective_user.id):
             await u.message.reply_text(
-                f"⏳ Breathe — {int(TG_COOLDOWN_SEC)}s before another file. I'm not a conveyor belt."
+                f"⏳ Wait {int(TG_COOLDOWN_SEC)}s before another file. I'm not a conveyor belt."
             )
             return
         doc=u.message.document
         if not (doc.file_name or "").endswith(".csv"):
-            await u.message.reply_text("❌ CSV only. PDFs don't verify — they just look important.")
+            await u.message.reply_text(
+                "❌ CSV only. PDFs are for people who like meetings."
+            )
             return
         sz = getattr(doc, "file_size", None) or 0
         if sz and sz > TG_MAX_CSV_BYTES:
@@ -4028,7 +4084,7 @@ def cmd_bot(_args):
             return
         if not _tg_rate_allow(u.effective_user.id):
             await u.message.reply_text(
-                f"⏳ {int(TG_COOLDOWN_SEC)}s between asks — even prodigies queue."
+                f"⏳ {int(TG_COOLDOWN_SEC)}s between asks. Pace yourself."
             )
             return
         # /ask <profile>? <question>  OR  plain text (optional profile as first word)
@@ -4045,7 +4101,7 @@ def cmd_bot(_args):
             return
         if len(q) > TG_MAX_QUESTION_CHARS:
             await u.message.reply_text(
-                f"❌ That novel tops out at {TG_MAX_QUESTION_CHARS} characters. Trim the manifesto."
+                f"❌ Max {TG_MAX_QUESTION_CHARS} characters. Trim it."
             )
             return
         all_p=analytics_profiles_all()
@@ -4061,16 +4117,15 @@ def cmd_bot(_args):
                         break
         if not q:
             await u.message.reply_text(
-                "You named a profile then went quiet. Bold strategy.\n"
-                "Add a question, e.g.\n"
-                "`/ask will how many meetings this week?`",
+                "You named a profile and stopped. Add a question.\n"
+                "e.g. `/ask will how many meetings this week?`",
                 parse_mode="Markdown",
             )
             return
         await u.message.reply_text(_random.choice(_TG_FETCHING_SNARK))
         try:
             answer, files = analytics_ask(q, profile_name=pname_res)
-            reply_body = f"🤖 {answer}"
+            reply_body = answer
             if not files:
                 ql = q.lower()
                 wants_file = any(
@@ -4088,14 +4143,13 @@ def cmd_bot(_args):
                 )
                 if wants_file:
                     reply_body += (
-                        "\n\n⚠️ You asked for files; I brought words. "
-                        "No attachment (export context, limits, or API — check server logs). Try again with less chaos."
+                        "\n\n⚠️ You wanted files. You got words. "
+                        "No attachment (export path, limits, or API — check server logs)."
                     )
                 else:
                     reply_body += (
-                        "\n\n💡 Text-only this round — want a file? Say export csv, download excel, or "
-                        "full analytics spreadsheet. CLI: mailclaw ask --export csv \"…\" → ~/Downloads. "
-                        "Yes, I can do Excel. Obviously."
+                        "\n\n💡 Text-only. Want a file? Say export csv, download excel, or full analytics spreadsheet. "
+                        "CLI: mailclaw ask --export csv \"…\" → ~/Downloads."
                     )
             await _tg_reply_text(u.message, reply_body)
             n_att = 0
@@ -4122,27 +4176,26 @@ def cmd_bot(_args):
             return
         if not _tg_rate_allow(u.effective_user.id):
             await u.message.reply_text(
-                f"⏳ Cool your jets — {int(TG_COOLDOWN_SEC)}s between analytics runs."
+                f"⏳ Wait {int(TG_COOLDOWN_SEC)}s between analytics runs."
             )
             return
         c2=cfg_load(); args_=ctx.args or []
         if len(args_) > 24:
-            await u.message.reply_text("❌ Too many arguments. Even I have limits.")
+            await u.message.reply_text("❌ Too many arguments. I don't read novels.")
             return
         all_prof=analytics_profiles_all()
         profiles=sorted({k.lower() for k in all_prof.keys()})
         if not args_:
             if not profiles:
                 await u.message.reply_text(
-                    "No analytics profiles yet — config first, swagger later. "
-                    "Set ANALYTICS_PROFILE_* env vars or run: mailclaw analytics-profiles"
+                    "No analytics profiles yet. Set ANALYTICS_PROFILE_* env vars or run: mailclaw analytics-profiles"
                 ); return
             plist="\n".join(f"• /analytics {p}" for p in sorted(profiles))
             await u.message.reply_text(f"*Analytics Profiles*\n\n{plist}\n\nOptional dates: /analytics will 2026-03-01 2026-03-31",parse_mode="Markdown"); return
 
         prof_name=args_[0].lower()
         if not prof_name or len(prof_name) > 64:
-            await u.message.reply_text("❌ That profile name isn't valid. Try again without the performance art.")
+            await u.message.reply_text("❌ Invalid profile name.")
             return
         prof=analytics_profile_load(prof_name)
         if not prof:
@@ -4162,9 +4215,7 @@ def cmd_bot(_args):
 
         dr_label=(tg_start or "all time")+" to "+(tg_end or "today")
         # Plain text — Instantly campaign names often contain "_" which breaks Markdown entities.
-        await u.message.reply_text(
-            f"Running {prof_name.upper()} — try to look calm.\n{dr_label}"
-        )
+        await u.message.reply_text(f"Running {prof_name.upper()}…\n{dr_label}")
 
         try:
             inst2=Instantly(client_meta["key"],client_meta["name"],0.12)
@@ -4183,8 +4234,7 @@ def cmd_bot(_args):
                     sel_ids.append(cid); sel_map[cid]=camp
             if not sel_ids:
                 await u.message.reply_text(
-                    "No campaigns with activity in that window — either you're too picky or nothing sent. "
-                    "Widen the dates or fix the pipe."
+                    "No campaigns with activity in that window. Widen the dates or fix the pipe."
                 ); return
 
             subseq_ids2={cid for cid in sel_ids
