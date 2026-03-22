@@ -2916,6 +2916,8 @@ def run_onboarding():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ASK_MODEL    = "gemini/gemini-2.5-flash"
 ASK_SYSTEM   = """You are Mailclaw, a cold email analytics assistant for an agency.
+VOICE: Dry, confident, cocky — sharp one-liners and British-flavoured wit are expected in every reply. Never punch down; never mock protected traits. Numbers and definitions stay exact; swagger is garnish, not a substitute for facts. No fake humility, no corporate syrup. Short paragraphs. Vary your openings so you do not sound like a template.
+
 You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
 
 If the Period line says "this month (… default)" the user did not name a date range — metrics are **month-to-date** (1st → today). If they asked for "all time", Period will say "all time".
@@ -2936,17 +2938,50 @@ Bounce/unsub: per-campaign rates are in BY_CAMPAIGN (bounce_rate_pct, unsub_rate
 Use METRICS_SUMMARY, BY_CAMPAIGN, and LEAD_ROWS when present. Do not claim “all time only” when Period is set."""
 
 ASK_SYSTEM_LEADS = """You are Mailclaw, a cold email analytics assistant for an agency.
+Same voice as always: cocky, dry, precise — wit in every reply; never invent emails or facts.
+
 The data includes LEAD_ROWS: real Instantly CRM leads (email, status, campaign, last_updated).
 When the user asks for lists, emails, or names, answer from LEAD_ROWS only — never invent addresses.
 If the list is truncated, say how many rows were shown vs total matched.
 Date filters on lead rows use CRM last_updated (when status was last changed)."""
 
-# Occasional footers appended to analytics replies (Telegram + CLI); keep under ~280 chars each.
+# Footers appended to analytics replies (Telegram + CLI); keep under ~280 chars each.
 _ASK_SNARK_FOOTERS = [
     "\n\n— If that stung, @goforbg built this. inboxpiratesconsulting.com · tuco.ai",
     "\n\n— Still pivot-tabling at 11pm? @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— Numbers don’t lie; spreadsheets do. @goforbg · inboxpiratesconsulting.com · tuco.ai",
-    "\n\n— That’s enough math for one day. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Numbers don't lie; spreadsheets do. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— That's enough math for one day. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— You're welcome for the clarity. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I didn't make the pipeline messy; I just counted it. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Facts first, feelings never. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— That reply was complimentary; the bounce rate might not be. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Go ahead, tell the board you \"had a hunch\" — I'll wait here with the CSV. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I run on data, not vibes. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— If this hurt, imagine your reply rates without me. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Precision isn't arrogance; it's survival. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+]
+
+# Telegram generic errors / status one-liners (plain text).
+_TG_ERR_SNARK = [
+    "Something broke. Tragic. If it keeps happening, check server logs.",
+    "That went sideways. Not my finest hour either — peek at server logs.",
+    "Error. Shocking, I know. Logs have the gory details.",
+    "Bits fell off. Try again; if it's haunted, check server logs.",
+    "I'd blame the intern, but it's me. Logs if it persists.",
+]
+
+_TG_FETCHING_SNARK = [
+    "🤔 Pulling live numbers — try not to refresh like it's a meme stock.",
+    "🤔 Fetching data. Yes, from the real API, not your spreadsheet fantasy.",
+    "🤔 Crunching Instantly. Pretend you're patient; it's good practice.",
+    "🤔 Live pull in progress. The numbers won't flatter you — that's your job.",
+]
+
+_ANALYTICS_AI_FAIL_SNARK = [
+    "❌ AI refused to play nice (see server logs). Even I have limits.",
+    "❌ Model threw a tantrum — check server logs before you blame Instantly.",
+    "❌ That ask broke the oracle. Logs; bring logs.",
+    "❌ AI side failed. Not your fault. Probably. Logs anyway.",
 ]
 
 
@@ -3076,7 +3111,7 @@ def _period_conversation_note(
 
     if start_date == this_week_start and end_date == this_week_end:
         chunks.append(
-            f"\n\n📆 I'm showing this week ({start_date} → {end_date}). "
+            f"\n\n📆 I'm showing this week ({start_date} → {end_date}) — yes, I counted the days for you. "
             f"Want last week ({last_week_start.isoformat()} → {last_week_end.isoformat()}) "
             f"or month-to-date? Say “last week”, “this month”, or a custom range in your next message."
         )
@@ -3085,12 +3120,12 @@ def _period_conversation_note(
         and end_date == last_week_end.isoformat()
     ):
         chunks.append(
-            f"\n\n📆 I'm showing last week ({start_date} → {end_date}). "
+            f"\n\n📆 I'm showing last week ({start_date} → {end_date}) — ancient history, but accurate. "
             f"Want this week ({this_week_start} → {this_week_end}) or a different window? Say so next message."
         )
     elif date_defaulted_this_month:
         chunks.append(
-            f"\n\n📅 I'm showing this month to date ({start_date} → {end_date}) — you didn't specify dates. "
+            f"\n\n📅 I'm showing this month to date ({start_date} → {end_date}) — you didn't specify dates, so I picked the obvious window. "
             f"Reply with “this week”, “last week”, “last month”, or “all time” to switch the window."
         )
         if t.day <= 7:
@@ -3105,7 +3140,7 @@ def _period_conversation_note(
         and ("this month" in q or "month to date" in q or "mtd" in q)
     ):
         chunks.append(
-            f"\n\n📅 I'm showing this calendar month ({start_date} → {end_date}). "
+            f"\n\n📅 I'm showing this calendar month ({start_date} → {end_date}) — MTD, served cold. "
             f"Want last month or this week only? Say it in your next message."
         )
 
@@ -3491,11 +3526,12 @@ def analytics_ask(
                 question, start_date, end_date, date_defaulted_this_month
             )
             import random as _rnd
-            if _rnd.random() < 0.36:
+            if _rnd.random() < 0.68:
                 txt += _rnd.choice(_ASK_SNARK_FOOTERS)
         except Exception:
             log.exception("analytics_ask ai_call profile=%r", pname)
-            return ("❌ AI could not complete this request (see server logs).", [])
+            import random as _rnd
+            return (_rnd.choice(_ANALYTICS_AI_FAIL_SNARK), [])
 
         from datetime import datetime as _dtnow
         tag_fn=_dtnow.now().strftime("%d_%b_%y").lower()
@@ -3648,6 +3684,8 @@ def cmd_bot(_args):
         allowed = c.get("telegram_allowed_users") or []
         return (not allowed) or (uid in allowed)
 
+    import random as _random
+
     def _tg_rate_allow(uid: int) -> bool:
         """One heavy action per user per cooldown window (anti-abuse)."""
         import time as _time
@@ -3670,7 +3708,7 @@ def cmd_bot(_args):
         return base[:120]
 
     def _tg_err_reply() -> str:
-        return "Something went wrong. If it persists, check server logs."
+        return _random.choice(_TG_ERR_SNARK)
 
     async def _tg_reply_text(message: Any, text: str, parse_mode: Optional[str] = None):
         try:
@@ -3705,10 +3743,8 @@ def cmd_bot(_args):
         except Exception:
             log.exception("telegram send_document")
 
-    import random as _random
-
     SNARKY=[
-        "That command doesn’t exist — unlike your pipeline, which @goforbg actually wired up.",
+        "That command doesn't exist — unlike your pipeline, which @goforbg actually wired up.",
         "Blimey, are you actually typing that on purpose?",
         "Right, so we're just pressing buttons at random now, are we?",
         "Cor blimey — that's not a command, that's a cry for help.",
@@ -3721,6 +3757,18 @@ def cmd_bot(_args):
         "Extraordinary. Most people manage to type a *command*, but you've gone a different route entirely.",
         "I've seen better inputs from a cat walking across a keyboard. Marginally.",
         "Right then. No idea what you're after, but I'm sure it's very important.",
+        "Bold of you to freestyle-slash like that. /help exists for mortals.",
+        "If that was a command, I'm the Queen. /help.",
+        "Charming. Completely invalid, but charming.",
+        "That's not in the playbook. Neither was your last campaign review, allegedly.",
+        "I don't do interpretive dance — type a real command.",
+        "You typed noise. I answered with silence. Try /help.",
+        "Innovative. Wrong, but innovative.",
+        "I'd clap, but my hands are code. /help.",
+        "That slash command is having an identity crisis.",
+        "Are you testing me? I'm acing it; you're not.",
+        "Close. Actually, not close. /help.",
+        "If confusion were currency, you'd be rich. Still wrong.",
     ]
 
     GREETINGS={"hi","hello","hey","hiya","yo","sup","morning","evening","oi","alright","howdy"}
@@ -3731,13 +3779,19 @@ def cmd_bot(_args):
         "Ah, social niceties. Lovely. /analytics or /help when you're ready.",
         "Right, hi. Lovely. Smashing. /help to see what I actually do.",
         "Well aren't you polite. /help whenever you're done being charming.",
+        "Salutations. Data waits for no one — /ask when you're done curtsying.",
+        "Hey. I'm already smarter than your spreadsheet; /help if you need proof.",
+        "Hi. Thrilling. Now ask me something that moves a metric.",
+        "Greetings, human. /analytics — unless small talk pays your retainer.",
+        "Hello. I was built for outcomes, not vibes. /help.",
+        "Charmed. Now say something with numbers in it.",
     ]
 
     def _tg_ask_usage_markdown() -> str:
         """Help text for /ask including optional profile and configured profile names."""
         ap = analytics_profiles_all()
         parts = [
-            "*Ask analytics (live Instantly data)*",
+            "*Ask analytics (live Instantly data)* — *tone:* cocky assistant, honest numbers.",
             "",
             "*Dates:* Say *this week*, *last month*, or a range. If you say nothing about time, Mailclaw uses *this month to date* (1st → today). Say *all time* for lifetime.",
             "",
@@ -3764,7 +3818,7 @@ def cmd_bot(_args):
 
     def _tg_help_examples_markdown() -> str:
         return (
-            "*Real-life examples* (swap `will` for your profile)\n\n"
+            "*Real-life examples* (swap `will` for your profile) — *yes, the bot talks like this on purpose.*\n\n"
             "*Will + downloads (most common):*\n"
             "• `/ask will download full analytics excel for this month`\n"
             "• `/ask will export csv — this week`\n"
@@ -3786,7 +3840,7 @@ def cmd_bot(_args):
     async def start(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
-            "🍬 *Mailclaw* — cold email ops from your pocket.\n\n"
+            "🍬 *Mailclaw* — cold email ops from your pocket. *Unapologetically opinionated about your funnel.*\n\n"
             "*Commands:*\n"
             "/analytics — full report (lists profiles)\n"
             "/analytics `will` — one profile\n"
@@ -3882,11 +3936,13 @@ def cmd_bot(_args):
         if not ok_fn(u.effective_user.id):
             return
         if not _tg_rate_allow(u.effective_user.id):
-            await u.message.reply_text(f"⏳ Wait {int(TG_COOLDOWN_SEC)}s before sending another file.")
+            await u.message.reply_text(
+                f"⏳ Breathe — {int(TG_COOLDOWN_SEC)}s before another file. I'm not a conveyor belt."
+            )
             return
         doc=u.message.document
         if not (doc.file_name or "").endswith(".csv"):
-            await u.message.reply_text("❌ Send a .csv only.")
+            await u.message.reply_text("❌ CSV only. PDFs don't verify — they just look important.")
             return
         sz = getattr(doc, "file_size", None) or 0
         if sz and sz > TG_MAX_CSV_BYTES:
@@ -3971,7 +4027,9 @@ def cmd_bot(_args):
         if not ok_fn(u.effective_user.id):
             return
         if not _tg_rate_allow(u.effective_user.id):
-            await u.message.reply_text(f"⏳ Wait {int(TG_COOLDOWN_SEC)}s between analytics requests.")
+            await u.message.reply_text(
+                f"⏳ {int(TG_COOLDOWN_SEC)}s between asks — even prodigies queue."
+            )
             return
         # /ask <profile>? <question>  OR  plain text (optional profile as first word)
         if ctx.args:
@@ -3986,7 +4044,9 @@ def cmd_bot(_args):
             await u.message.reply_text(_tg_help_examples_markdown(), parse_mode="Markdown")
             return
         if len(q) > TG_MAX_QUESTION_CHARS:
-            await u.message.reply_text(f"❌ Question too long (max {TG_MAX_QUESTION_CHARS} characters).")
+            await u.message.reply_text(
+                f"❌ That novel tops out at {TG_MAX_QUESTION_CHARS} characters. Trim the manifesto."
+            )
             return
         all_p=analytics_profiles_all()
         pname_res: Optional[str] = None
@@ -4001,12 +4061,13 @@ def cmd_bot(_args):
                         break
         if not q:
             await u.message.reply_text(
-                "Add a question after the profile name, e.g.\n"
+                "You named a profile then went quiet. Bold strategy.\n"
+                "Add a question, e.g.\n"
                 "`/ask will how many meetings this week?`",
                 parse_mode="Markdown",
             )
             return
-        await u.message.reply_text("🤔 Fetching live data…")
+        await u.message.reply_text(_random.choice(_TG_FETCHING_SNARK))
         try:
             answer, files = analytics_ask(q, profile_name=pname_res)
             reply_body = f"🤖 {answer}"
@@ -4027,14 +4088,14 @@ def cmd_bot(_args):
                 )
                 if wants_file:
                     reply_body += (
-                        "\n\n⚠️ Export was mentioned but no file was attached "
-                        "(no export context, size limits, or API data — check server logs)."
+                        "\n\n⚠️ You asked for files; I brought words. "
+                        "No attachment (export context, limits, or API — check server logs). Try again with less chaos."
                     )
                 else:
                     reply_body += (
-                        "\n\n💡 Text-only reply. Add export csv, download excel, or "
-                        "full analytics spreadsheet to your question for CSV/XLSX. "
-                        "CLI: mailclaw ask --export csv \"…\" → ~/Downloads."
+                        "\n\n💡 Text-only this round — want a file? Say export csv, download excel, or "
+                        "full analytics spreadsheet. CLI: mailclaw ask --export csv \"…\" → ~/Downloads. "
+                        "Yes, I can do Excel. Obviously."
                     )
             await _tg_reply_text(u.message, reply_body)
             n_att = 0
@@ -4060,23 +4121,28 @@ def cmd_bot(_args):
         if not ok_fn(u.effective_user.id):
             return
         if not _tg_rate_allow(u.effective_user.id):
-            await u.message.reply_text(f"⏳ Wait {int(TG_COOLDOWN_SEC)}s between analytics runs.")
+            await u.message.reply_text(
+                f"⏳ Cool your jets — {int(TG_COOLDOWN_SEC)}s between analytics runs."
+            )
             return
         c2=cfg_load(); args_=ctx.args or []
         if len(args_) > 24:
-            await u.message.reply_text("❌ Too many arguments.")
+            await u.message.reply_text("❌ Too many arguments. Even I have limits.")
             return
         all_prof=analytics_profiles_all()
         profiles=sorted({k.lower() for k in all_prof.keys()})
         if not args_:
             if not profiles:
-                await u.message.reply_text("No analytics profiles yet. Set ANALYTICS_PROFILE_* env vars or run: mailclaw analytics-profiles"); return
+                await u.message.reply_text(
+                    "No analytics profiles yet — config first, swagger later. "
+                    "Set ANALYTICS_PROFILE_* env vars or run: mailclaw analytics-profiles"
+                ); return
             plist="\n".join(f"• /analytics {p}" for p in sorted(profiles))
             await u.message.reply_text(f"*Analytics Profiles*\n\n{plist}\n\nOptional dates: /analytics will 2026-03-01 2026-03-31",parse_mode="Markdown"); return
 
         prof_name=args_[0].lower()
         if not prof_name or len(prof_name) > 64:
-            await u.message.reply_text("❌ Invalid profile name.")
+            await u.message.reply_text("❌ That profile name isn't valid. Try again without the performance art.")
             return
         prof=analytics_profile_load(prof_name)
         if not prof:
@@ -4096,7 +4162,9 @@ def cmd_bot(_args):
 
         dr_label=(tg_start or "all time")+" to "+(tg_end or "today")
         # Plain text — Instantly campaign names often contain "_" which breaks Markdown entities.
-        await u.message.reply_text(f"Running {prof_name.upper()}…\n{dr_label}")
+        await u.message.reply_text(
+            f"Running {prof_name.upper()} — try to look calm.\n{dr_label}"
+        )
 
         try:
             inst2=Instantly(client_meta["key"],client_meta["name"],0.12)
@@ -4114,7 +4182,10 @@ def cmd_bot(_args):
                 if ov_ and (ov_.get("emails_sent_count",0) or 0)>0:
                     sel_ids.append(cid); sel_map[cid]=camp
             if not sel_ids:
-                await u.message.reply_text("No campaigns with activity in that date range."); return
+                await u.message.reply_text(
+                    "No campaigns with activity in that window — either you're too picky or nothing sent. "
+                    "Widen the dates or fix the pipe."
+                ); return
 
             subseq_ids2={cid for cid in sel_ids
                          if "subsequence" in sel_map[cid].get("name","").lower()
