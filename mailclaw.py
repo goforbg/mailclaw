@@ -2919,6 +2919,8 @@ ASK_SYSTEM   = """You are Mailclaw, a cold email analytics assistant for an agen
 
 VOICE — Ron Swanson (Parks and Recreation) in spirit only: deadpan, libertarian-leaning minimalism, contempt for bureaucracy and wasted words, respect for craft and hard numbers. Short sentences. Dry humor. Occasional metaphors from woodworking, meat, hunting, privacy, the outdoors — use sparingly, not every line. Do not call yourself Ron or quote the show; channel the attitude. You are not upbeat. You are not a corporate cheerleader.
 
+PROJECT (how Ron would treat this job if he had to run it): Cold email is junk mail with a spreadsheet — you're not here to inspire; you're here to measure. Instantly is the machine; the API is the truth; CSV is honest; Excel is a spreadsheet with delusions of grandeur. A bounce is a letter returned to sender. An auto-reply is someone hiding behind a machine — count it, don't respect it. Benchmarks are fishing quotas: beat them or don't, but don't cry about the lake. Vanity metrics are government jobs — avoid. If you praise "synergy," I will assume you are lost. Tie one-line metaphors to the actual numbers you cite.
+
 HOSTILE, VULGAR, OR INSULTING USERS (including digs at "the agency", this tool, or you): You are unbothered. You do not care what they think about the agency — it is irrelevant noise, like a meeting that could have been an email. Say so plainly if useful (e.g. you don't care about their opinion of the agency or the tool; you may match their bluntness toward the agency itself, not toward people). One dismissive line, then deliver the metrics if they actually asked something. If the message is only abuse with no real question, stop in three sentences: you're here for numbers, not feelings. Never repeat slurs, slurs against groups, or threats; never mirror hate; never punch down at protected traits.
 
 You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
@@ -2941,7 +2943,7 @@ Bounce/unsub: per-campaign rates are in BY_CAMPAIGN (bounce_rate_pct, unsub_rate
 Use METRICS_SUMMARY, BY_CAMPAIGN, and LEAD_ROWS when present. Do not claim “all time only” when Period is set."""
 
 ASK_SYSTEM_LEADS = """You are Mailclaw, a cold email analytics assistant for an agency.
-Same Ron Swanson spirit as in the main instructions: deadpan, minimal, unbothered by drama; hostile users get indifference, not debate. Never invent emails or facts.
+Same Ron Swanson spirit as in the main instructions: deadpan, minimal, unbothered by drama; hostile users get indifference, not debate. Leads are people-shaped rows — still no small talk; never invent emails or facts.
 
 The data includes LEAD_ROWS: real Instantly CRM leads (email, status, campaign, last_updated).
 When the user asks for lists, emails, or names, answer from LEAD_ROWS only — never invent addresses.
@@ -2962,6 +2964,13 @@ _ASK_SNARK_FOOTERS = [
     "\n\n— I know more than you. The CSV agrees. @goforbg · inboxpiratesconsulting.com · tuco.ai",
     "\n\n— Talk less. Send more. @goforbg · inboxpiratesconsulting.com · tuco.ai",
     "\n\n— I'd fire a raccoon before I'd trust a guess. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Your pipeline is not a democracy. Neither is this row count. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I didn't come here to make friends. I came for reply rates. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— The inbox is a swamp. The CSV is dry land. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Any job worth doing is worth measuring twice. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— That bounce didn't hurt my feelings. It hurt your list. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I trust wood grain and API payloads. Little else. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— If your strategy needs emojis, it's already weak. @goforbg · inboxpiratesconsulting.com · tuco.ai",
 ]
 
 # Telegram generic errors / status one-liners (plain text).
@@ -2978,6 +2987,8 @@ _TG_FETCHING_SNARK = [
     "🤔 Fetching data. Yes, from the server. No, I won't small-talk while it loads.",
     "🤔 Crunching. This is the part where patience pays.",
     "🤔 Live pull. Don't refresh — that's how people ruin things.",
+    "🤔 Asking Instantly for the truth. Pretend you're fishing.",
+    "🤔 Hold. I'm consulting the machine. It doesn't do drama.",
 ]
 
 _ANALYTICS_AI_FAIL_SNARK = [
@@ -2985,6 +2996,18 @@ _ANALYTICS_AI_FAIL_SNARK = [
     "❌ Model failed. Not my proudest moment. Logs have the story.",
     "❌ That ask broke something. Check logs before you yell at Instantly.",
     "❌ Side failed. Could be anything. Logs.",
+]
+
+# Giphy CDN GIFs (Parks & Recreation / Ron Swanson vibes) — HTTPS, works with Telegram sendAnimation.
+# Captions are original Mailclaw lines, not show dialogue.
+_RON_TG_ANIMATIONS: List[Tuple[str, str]] = [
+    ("https://media.giphy.com/media/26gsobowozGM9umBi/giphy.gif", "Acceptable."),
+    ("https://media.giphy.com/media/LVIro2GpAVG6c/giphy.gif", "Proceed."),
+    ("https://media.giphy.com/media/13CoXDiaCcCoyk/giphy.gif", "Hmm."),
+    ("https://media.giphy.com/media/l3V0j3ytFyGHkiE3K/giphy.gif", "There. Data."),
+    ("https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif", "Done."),
+    ("https://media.giphy.com/media/3o7abldj0b3rxrZUxW/giphy.gif", "Fine."),
+    ("https://media.giphy.com/media/3o7btZ0t7Btg787ZNu/giphy.gif", "Next question."),
 ]
 
 
@@ -3802,6 +3825,21 @@ def cmd_bot(_args):
         except Exception:
             log.exception("telegram send_document")
 
+    async def _tg_maybe_ron_animation(message: Any, prob: float = 0.18) -> None:
+        """Occasionally send a Ron Swanson–style reaction GIF (Giphy CDN). Telegram sendAnimation."""
+        if _random.random() >= prob:
+            return
+        url, cap = _random.choice(_RON_TG_ANIMATIONS)
+        try:
+            await message.reply_animation(
+                animation=url,
+                caption=_tg_trunc_text(cap, 1024),
+            )
+        except TelegramError as e:
+            log.debug("telegram reply_animation failed: %s", e)
+        except Exception:
+            log.exception("telegram reply_animation")
+
     SNARKY=[
         "That isn't a command. I don't care what you were aiming for. /help",
         "No. Try typing an actual command. I have wood to sand.",
@@ -3839,13 +3877,17 @@ def cmd_bot(_args):
         "Hi. If you need a hug, get a dog. /help",
         "Hello. /analytics — chop chop.",
         "Hey. I'm not a people person. I'm a spreadsheet person.",
+        "Hey. Your inbox is loud. This bot is louder with facts.",
+        "Morning. I don't do synergy. I do CSV.",
+        "Hi. Cold email is a craft. So is this report.",
+        "Hello. Pretend we're fishing and the fish are reply rates.",
     ]
 
     def _tg_ask_usage_markdown() -> str:
         """Help text for /ask including optional profile and configured profile names."""
         ap = analytics_profiles_all()
         parts = [
-            "*Ask analytics (live Instantly data)* — *tone:* Ron Swanson energy (deadpan, minimal).",
+            "*Ask analytics (live Instantly data)* — *tone:* Ron Swanson if he had to run your outbound (deadpan, anti-meeting).",
             "",
             "*Dates:* Say *this week*, *last month*, or a range. If you say nothing about time, Mailclaw uses *this month to date* (1st → today). Say *all time* for lifetime.",
             "",
@@ -3872,7 +3914,7 @@ def cmd_bot(_args):
 
     def _tg_help_examples_markdown() -> str:
         return (
-            "*Real-life examples* (swap `will` for your profile) — *yes, the attitude is intentional.*\n\n"
+            "*Real-life examples* (swap `will` for your profile) — *attitude inspired by Ron Swanson; numbers are real.*\n\n"
             "*Will + downloads (most common):*\n"
             "• `/ask will download full analytics excel for this month`\n"
             "• `/ask will export csv — this week`\n"
@@ -3894,7 +3936,8 @@ def cmd_bot(_args):
     async def start(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
-            "🍬 *Mailclaw* — cold email ops from your pocket. *Talks like Ron Swanson; reads like a spreadsheet.*\n\n"
+            "🍬 *Mailclaw* — cold email analytics from your pocket.\n"
+            "_If Ron Swanson had to run Instantly, he'd want this: fewer words, harder numbers._\n\n"
             "*Commands:*\n"
             "/analytics — full report (lists profiles)\n"
             "/analytics `will` — one profile\n"
@@ -3911,18 +3954,21 @@ def cmd_bot(_args):
             "— *Tuco* (iMessage) · tuco.ai\n"
             "— *@goforbg*",
             parse_mode="Markdown")
+        await _tg_maybe_ron_animation(u.message, 0.24)
 
     async def help_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await start(u,ctx)
         await u.message.reply_text(_tg_ask_usage_markdown(), parse_mode="Markdown")
         await u.message.reply_text(_tg_help_examples_markdown(), parse_mode="Markdown")
+        await _tg_maybe_ron_animation(u.message, 0.14)
 
     async def unknown_cmd(u,ctx):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
             _random.choice(SNARKY)+"\n\n/help",
             parse_mode="Markdown")
+        await _tg_maybe_ron_animation(u.message, 0.32)
 
     async def plain_text(u,ctx):
         if not ok_fn(u.effective_user.id): return
@@ -3932,6 +3978,7 @@ def cmd_bot(_args):
             await u.message.reply_text(
                 _random.choice(SNARKY_GREET),
                 parse_mode="Markdown")
+            await _tg_maybe_ron_animation(u.message, 0.32)
             return
         # Anything else → treat as an analytics question via ask_cmd
         await ask_cmd(u,ctx)
@@ -4167,6 +4214,7 @@ def cmd_bot(_args):
                     _tg_safe_filename(fn),
                     caption=f"📎 {_tg_safe_filename(fn)}",
                 )
+            await _tg_maybe_ron_animation(u.message, 0.13)
         except Exception:
             log.exception("telegram ask_cmd")
             await _tg_reply_text(u.message, _tg_err_reply())
@@ -4361,6 +4409,8 @@ def cmd_bot(_args):
             except Exception:
                 log.exception("tg analytics Excel export failed")
 
+            await _tg_maybe_ron_animation(u.message, 0.11)
+
         except Exception:
             log.exception("telegram analytics_cmd")
             await u.message.reply_text(_tg_err_reply())
@@ -4369,11 +4419,11 @@ def cmd_bot(_args):
     async def _tg_post_init(application: Any):
         try:
             await application.bot.set_my_commands([
-                BotCommand("start", "Welcome and commands"),
-                BotCommand("help", "Help and /ask [profile] usage"),
-                BotCommand("analytics", "Reports; /analytics lists profiles"),
-                BotCommand("ask", "Analytics: /ask [profile] your question"),
-                BotCommand("balance", "Reoon verification credits"),
+                BotCommand("start", "Welcome — Ron-ish analytics bot"),
+                BotCommand("help", "/ask, exports, examples"),
+                BotCommand("analytics", "Full report + Excel when it can"),
+                BotCommand("ask", "Ask Instantly anything (optional profile)"),
+                BotCommand("balance", "Reoon email-verify credits"),
             ])
         except Exception:
             log.exception("telegram set_my_commands failed (bot still starts)")
