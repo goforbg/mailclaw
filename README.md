@@ -60,7 +60,7 @@ Powered by **[Tuco.ai](https://tuco.ai)** — automate your iMessage outreach (*
 |:---|:---|
 | **Numbers without opening Instantly** | `python mailclaw.py ask "how many meetings did we book this month?"` |
 | **A client-specific answer** | `python mailclaw.py ask --profile acme "bounce rate last week"` or Telegram: `/ask acme what was our reply rate in March?` |
-| **A full Excel war room** | `python mailclaw.py analytics` → pick dates → export |
+| **A full Excel war room** | `python mailclaw.py analytics` → pick dates → export; or `python mailclaw.py ask --export xlsx "…"` → **~/Downloads** |
 | **Verify a list from your phone** | Send a `.csv` to the Telegram bot |
 | **Credits that aren’t made up** | `python mailclaw.py balance` or `/balance` (live Reoon API) |
 
@@ -134,6 +134,7 @@ python mailclaw.py bot           # start Telegram bot
 | `mailclaw.py upload` | Upload to Instantly only |
 | `mailclaw.py analytics` | Interactive analytics report |
 | `mailclaw.py ask "…"` | Natural-language analytics (Instantly + AI); `--profile name` for one client |
+| `mailclaw.py ask --export csv "…"` | Same as ask, but **always** builds full analytics **CSV** (and `--export xlsx` / `both`) → **~/Downloads** |
 | `mailclaw.py bot` | Start Telegram bot (24/7) |
 | `mailclaw.py balance` | Check Reoon + AI credits |
 | `mailclaw.py config` | Manage API keys |
@@ -145,10 +146,12 @@ python mailclaw.py bot           # start Telegram bot
 
 ## Examples galore
 
-**Natural-language analytics (CLI)** — uses live Instantly data + Gemini (same engine as the Telegram bot):
+**Natural-language analytics (CLI)** — uses live Instantly data + Gemini (same engine as the Telegram bot).
+
+**Answers are text-only** unless you (a) include **export** language in the question, or (b) pass **`--export`**. CSV/XLSX are written to **`~/Downloads`** on macOS/Linux (folder is created if missing).
 
 ```bash
-# Portfolio questions (default analytics profile)
+# Portfolio questions (default analytics profile) — text reply only
 python mailclaw.py ask "how many emails did we send yesterday?"
 python mailclaw.py ask "what was our human reply rate last week?"
 python mailclaw.py ask "how many meetings did we book this month?"
@@ -157,9 +160,12 @@ python mailclaw.py ask "how many meetings did we book this month?"
 python mailclaw.py ask --profile will "show me stats for this week"
 python mailclaw.py ask --profile acme "what was our bounce rate in Q1?"
 
-# Lists + exports (phrases like “export” / “csv” / “excel” trigger attachments when applicable)
+# Files → ~/Downloads — put csv / excel / download in the question, OR use --export
 python mailclaw.py ask "which leads booked a meeting this week — export csv"
 python mailclaw.py ask "download full analytics excel for last month"
+python mailclaw.py ask --export csv "reply rate last week"           # always attach full analytics CSV
+python mailclaw.py ask --export xlsx --profile will "March summary"  # Excel workbook
+python mailclaw.py ask --export both "Q1 numbers"                    # CSV + XLSX
 ```
 
 **Interactive report (CLI)** — full campaign breakdown + Excel when you want menus:

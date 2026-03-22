@@ -44,7 +44,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime, date
-from typing import Optional, List, Dict, Tuple, Any, Set
+from typing import Optional, List, Dict, Tuple, Any, Set, Literal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 
@@ -2942,7 +2942,21 @@ Date filters on lead rows use CRM last_updated (when status was last changed).""
 def _ask_export_intent(question: str) -> str:
     """'' | 'leads_csv' | 'full_csv' | 'full_xlsx' | 'full_both'"""
     ql = question.lower()
-    if not any(k in ql for k in ("export", "download", "csv", "excel", "xlsx", "spreadsheet")):
+    # Need explicit file intent — otherwise answers are text-only (no ~/Downloads or Telegram attachments).
+    if not any(
+        k in ql
+        for k in (
+            "export",
+            "download",
+            "csv",
+            "excel",
+            "xlsx",
+            "xls",
+            "spreadsheet",
+            "attach",
+            "attachment",
+        )
+    ):
         return ""
     csv_ = "csv" in ql
     xlsx_ = "excel" in ql or "xlsx" in ql
@@ -3123,10 +3137,18 @@ def _parse_dates(question: str, client_slug: Optional[str] = None) -> Tuple[str,
         log.debug("_parse_dates failed: %s",e); return "",""
 
 
-def analytics_ask(question: str, profile_name: Optional[str] = None) -> Tuple[str, List[Tuple[str, bytes]]]:
+def analytics_ask(
+    question: str,
+    profile_name: Optional[str] = None,
+    force_export: Optional[Literal["csv", "xlsx", "both"]] = None,
+) -> Tuple[str, List[Tuple[str, bytes]]]:
     """
     Answer a natural language analytics question using live Instantly data + Gemini.
     Returns (answer_text, [(filename, bytes), ...]) for optional CSV/Excel exports.
+
+    Files are only built when the question mentions export keywords (csv, excel, download, …)
+    or when ``force_export`` is set (CLI ``--export``). CLI saves to ~/Downloads; Telegram sends
+    as reply documents.
     """
     from datetime import date
     import json as _j
@@ -3164,6 +3186,12 @@ def analytics_ask(question: str, profile_name: Optional[str] = None) -> Tuple[st
     dr_label = f"{start_date} → {end_date}" if (start_date or end_date) else "all time"
     lead_intent = _ask_lead_list_intent(question)
     export_kind = _ask_export_intent(question)
+    if force_export == "csv":
+        export_kind = "full_csv"
+    elif force_export == "xlsx":
+        export_kind = "full_xlsx"
+    elif force_export == "both":
+        export_kind = "full_both"
     if export_kind == "leads_csv" and not lead_intent:
         qlx = question.lower()
         if "meeting" in qlx:
@@ -3416,9 +3444,14 @@ def cmd_ask(args):
         console.print("[dim]  mailclaw ask 'what was our reply rate last week?'[/]")
         console.print("[dim]  mailclaw ask 'how many meetings did we book this month?'[/]")
         console.print("[dim]  mailclaw ask --profile will 'show me this week stats'[/]")
+        console.print("[dim]  mailclaw ask --export csv 'reply rate last week'   # save full analytics CSV → ~/Downloads[/]")
+        console.print("[dim]  mailclaw ask --export xlsx 'March summary'         # save Excel workbook[/]")
+        console.print("[dim]  mailclaw ask 'export csv — meetings this week'    # or put csv/excel in the question[/]")
         return
     console.print("[dim]🤔 Fetching data and thinking…[/]")
-    answer, files = analytics_ask(q, profile_name=getattr(args,"profile",None))
+    fe = getattr(args, "export", None) or "auto"
+    force = None if fe == "auto" else fe
+    answer, files = analytics_ask(q, profile_name=getattr(args, "profile", None), force_export=force)
     console.print()
     console.print(Panel(f"[white]{answer}[/]",
                         title=f"[dim cyan]🤖 Mailclaw AI[/]",
@@ -3431,6 +3464,11 @@ def cmd_ask(args):
             p = dl / fn
             p.write_bytes(data)
             console.print(f"[green]✓[/] Saved → [yellow]{p}[/]")
+    elif fe == "auto":
+        console.print(
+            "[dim]No CSV/XLSX this run. Say [yellow]export csv[/], [yellow]download excel[/], or use "
+            "[yellow]--export csv|xlsx|both[/] — files save under ~/Downloads.[/]"
+        )
 
 
 def cmd_bot(_args):
@@ -3827,7 +3865,34 @@ def cmd_bot(_args):
         await u.message.reply_text("🤔 Fetching live data…")
         try:
             answer, files = analytics_ask(q, profile_name=pname_res)
-            await _tg_reply_text(u.message, f"🤖 {answer}")
+            reply_body = f"🤖 {answer}"
+            if not files:
+                ql = q.lower()
+                wants_file = any(
+                    k in ql
+                    for k in (
+                        "export",
+                        "download",
+                        "csv",
+                        "excel",
+                        "xlsx",
+                        "spreadsheet",
+                        "attach",
+                        "attachment",
+                    )
+                )
+                if wants_file:
+                    reply_body += (
+                        "\n\n⚠️ Export was mentioned but no file was attached "
+                        "(no export context, size limits, or API data — check server logs)."
+                    )
+                else:
+                    reply_body += (
+                        "\n\n💡 Text-only reply. Add export csv, download excel, or "
+                        "full analytics spreadsheet to your question for CSV/XLSX. "
+                        "CLI: mailclaw ask --export csv \"…\" → ~/Downloads."
+                    )
+            await _tg_reply_text(u.message, reply_body)
             n_att = 0
             for fn, blob in files:
                 if n_att >= TG_MAX_ATTACHMENTS:
@@ -5843,6 +5908,14 @@ def main():
     aq=s.add_parser("ask", help='Ask AI a question: mailclaw ask "emails sent yesterday?"')
     aq.add_argument("question", nargs="*", help="Your question in plain English")
     aq.add_argument("--profile","-p", default=None, help="Analytics profile name")
+    aq.add_argument(
+        "--export",
+        choices=["auto", "csv", "xlsx", "both"],
+        default="auto",
+        metavar="MODE",
+        help="auto=only attach files if question mentions csv/excel/download; csv|xlsx|both=always build "
+        "full analytics export (saved to ~/Downloads on CLI, Telegram attachments on bot)",
+    )
 
     args=p.parse_args()
     if getattr(args, "debug", False):
