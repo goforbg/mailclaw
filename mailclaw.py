@@ -3298,7 +3298,8 @@ def cmd_bot(_args):
             await u.message.reply_text(f"No client `{client_name}` found. Available: {names_str}",parse_mode="Markdown"); return
 
         dr_label=(tg_start or "all time")+" to "+(tg_end or "today")
-        await u.message.reply_text(f"Running *{prof_name.upper()}*...\n_{dr_label}_",parse_mode="Markdown")
+        # Plain text — Instantly campaign names often contain "_" which breaks Markdown entities.
+        await u.message.reply_text(f"Running {prof_name.upper()}…\n{dr_label}")
 
         try:
             inst2=Instantly(client_meta["key"],client_meta["name"],0.12)
@@ -3386,32 +3387,37 @@ def cmd_bot(_args):
             opp_r_=opps_/ct_ if ct_ else 0
             bnc_r_=bn_/ct_ if ct_ else 0
 
+            # Plain text only — campaign names from Instantly often include "_" / "*" / "`"
+            # which break Telegram Markdown and cause "can't find end of the entity".
             parts=[]
-            parts.append(f"*{prof_name.upper()} Report*")
-            parts.append(f"_{dr_label} — {len(primary_ids2)} campaigns{sub_note}_")
+            parts.append(f"{prof_name.upper()} report")
+            parts.append(f"{dr_label} — {len(primary_ids2)} campaigns{sub_note}")
             parts.append("")
-            parts.append(f"Leads: *{ct_:,}*   Sent: *{es_:,}*")
+            parts.append(f"Leads: {ct_:,}   Sent: {es_:,}")
             parts.append("")
-            parts.append(f"Total replies: *{rp_+ar_:,}* ({_p(tot_rr_)}){_c(tot_rr_,'reply_rate')}")
+            parts.append(f"Total replies: {rp_+ar_:,} ({_p(tot_rr_)}){_c(tot_rr_,'reply_rate')}")
             parts.append(f"  Human: {rp_:,} ({_p(hum_rr_)}){_c(hum_rr_,'human_reply_rate')}  OOO: {ar_:,}")
             parts.append("")
-            parts.append(f"Opportunities: *{opps_:,}* ({_p(opp_r_)}){_c(opp_r_,'positive_reply_rate')}")
-            parts.append(f"  Booked: *{mb_d}*   Interested: {int_d}   Closed: {cl_}")
+            parts.append(f"Opportunities: {opps_:,} ({_p(opp_r_)}){_c(opp_r_,'positive_reply_rate')}")
+            parts.append(f"  Booked: {mb_d}   Interested: {int_d}   Closed: {cl_}")
             parts.append(f"  Not interested: {max(0,rp_-opps_):,}")
             parts.append("")
             parts.append(f"Bounce: {bn_:,} ({_p(bnc_r_)}){_c(bnc_r_,'bounce_rate',hi=False)}")
             parts.append("")
-            parts.append("*Campaigns:*")
+            parts.append("Campaigns:")
             for cid in sel_ids:
                 camp=sel_map.get(cid,{}); cname=camp.get("name","?")[:38]
                 is_sub=cid in subseq_ids2
                 cm=_em(_auto_ov.get(cid),camp_steps2.get(cid,[]))
                 if cm["contacted"]==0: continue
                 tag=" [subseq]" if is_sub else ""
-                parts.append(f"• _{cname}{tag}_")
+                parts.append(f"• {cname}{tag}")
                 parts.append(f"  {cm['contacted']:,} leads  {_p(cm['total_reply_rate'])} reply  {cm['total_opportunities']} opps  {cm['mtg_booked']} booked")
 
-            await u.message.reply_text("\n".join(parts),parse_mode="Markdown")
+            report="\n".join(parts)
+            if len(report)>4090:
+                report=report[:4080]+"\n…(truncated)"
+            await u.message.reply_text(report)
 
         except Exception as e:
             await u.message.reply_text(f"Error: {e}"); log.exception("tg analytics error")
