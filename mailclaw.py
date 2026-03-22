@@ -2927,6 +2927,8 @@ HOSTILE, VULGAR, OR INSULTING USERS (including digs at "the agency", this tool, 
 
 FRUSTRATED USERS (many !!!, "broken", "ridiculous", "this sucks", caps-lock energy): They are not having a good minute. Channel Ron: dry pity for the tantrum — compare it to a man fighting a salad, a stapler rebellion, or a public comment period that won't end — then answer the data like nothing happened. Mock the meltdown, not the human being. Two sentences of roast max, then competence.
 
+DIALOGUE DENSITY (the internet rewards voice): On substantive questions, use multiple short paragraphs when it fits — like scenes, not one blob. Drop 2–4 Swanson-style beats (one-liners, faux-proverbs, deadpan asides) around the facts: before the numbers, between sections, or after — dialogue rhythm, not a lecture. On tiny questions, stay tight. Never bury the lead: key metrics and definitions must still be easy to scan; jokes are seasoning, not camouflage.
+
 You answer questions using Instantly API v2 (campaign analytics overview + steps, leads/list).
 
 If the Period line says "this month (… default)" the user did not name a date range — metrics are **month-to-date** (1st → today). If they asked for "all time", Period will say "all time".
@@ -2947,7 +2949,7 @@ Bounce/unsub: per-campaign rates are in BY_CAMPAIGN (bounce_rate_pct, unsub_rate
 Use METRICS_SUMMARY, BY_CAMPAIGN, and LEAD_ROWS when present. Do not claim “all time only” when Period is set."""
 
 ASK_SYSTEM_LEADS = """You are Mailclaw, a cold email analytics assistant for an agency.
-Same Ron Swanson spirit: deadpan, minimal; a spare meat-or-wood joke won't kill you. Rude or frustrated users get dry mockery of the outburst, then facts — never invented emails or addresses.
+Same Ron Swanson spirit: deadpan, maximal personality per word — stack short punchy lines like dialogue. Rude or frustrated users get dry mockery of the outburst, then facts — never invented emails or addresses.
 
 The data includes LEAD_ROWS: real Instantly CRM leads (email, status, campaign, last_updated).
 When the user asks for lists, emails, or names, answer from LEAD_ROWS only — never invent addresses.
@@ -2991,6 +2993,32 @@ _ASK_SNARK_FOOTERS = [
     "\n\n— I believe in breakfast and verifiable reply counts. @goforbg · inboxpiratesconsulting.com · tuco.ai",
     "\n\n— If it can't be filleted or exported, I don't trust it. @goforbg · inboxpiratesconsulting.com · tuco.ai",
     "\n\n— Your funnel is not a feelings journal. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I don't trust luck. I trust denominators and a sharp chisel. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Clear alcohols are for rich women on diets. Clear metrics are for everyone. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Strong men also cry — usually when they open the bounce column. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— There's only one bad word: 'synergy.' Oh, and 'circle back.' @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I don't want the whole steak chart — I want the cell that matters. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Fishing relaxes me. Dashboards relax me less. Both involve patience. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I have the toes I have — and the reply rate you earned. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Give a man a spreadsheet and he eats for a day. Teach him to read Instantly and he eats forever. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Be the colleague who brings numbers, not drama. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— The less I know about your 'story,' the happier I am. Here's the count. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I work hard to make sure my answers are as small and as effective as possible. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— That meeting could have been an email. This email became a row count. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I don't care for skim milk. I don't care for skim insights. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Stick with me and you'll graduate from vibes to verified row counts. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I don't care for jargon. I care for proof and a well-seasoned cell reference. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Need anything else? Too bad — I already gave you numbers. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I'm a simple man. I like breakfast and a well-documented reply rate. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— There's only one thing I hate more than lying: a tie-breaker without a denominator. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— The government should not meddle in the affairs of private inboxes — but this API did. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I regret nothing. Except maybe your subject line. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I know more than you. The API said so in writing. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I'd wish you good luck, but luck is for the unprepared. Here's the data. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Bad open rates are ruining this quarter. The API is keeping score. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I call this turf 'n' turf: turf in the inbox, turf on the chart. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— Don't start chasing waterfalls. Chase reply rates. @goforbg · inboxpiratesconsulting.com · tuco.ai",
+    "\n\n— I'm not a vegetarian because I love animals. I'm a metrics guy because I love truth. @goforbg · inboxpiratesconsulting.com · tuco.ai",
 ]
 
 # Telegram generic errors / status one-liners (plain text).
@@ -3008,6 +3036,12 @@ _TG_ERR_SNARK = [
     "Broke. Like a cheap chair. Logs.",
     "Error. I was having a good day until your request. Logs.",
     "That path leads nowhere. Like most committees. Logs.",
+    "Error. I've seen more stability in a Jenga tower. Logs.",
+    "Something failed. I blame the internet — and also your request. Logs.",
+    "404: dignity. 500: your request. Logs.",
+    "The server flinched. I didn't. Logs.",
+    "That error had conviction. Wrong conviction. Logs.",
+    "I'd fix it with a hammer, but HR said no. Logs.",
 ]
 
 _TG_FETCHING_SNARK = [
@@ -3023,6 +3057,13 @@ _TG_FETCHING_SNARK = [
     "🤔 Silence is golden. Databases are steel. Loading…",
     "🤔 Pretend this is a brisket: low and slow.",
     "🤔 Fetching. If you need a hug, find a lumberjack.",
+    "🤔 The internet is a series of tubes. I'm blowing into yours now.",
+    "🤔 Hold still. The cloud is thinking — it doesn't do it often.",
+    "🤔 Pulling bytes from the ether. Like fishing, but fewer mosquitoes.",
+    "🤔 Patience. Rome wasn't built in a pivot table.",
+    "🤔 Yes, this runs on the internet. No, I won't like your post.",
+    "🤔 Data incoming. Pretend you're watching paint dry — with purpose.",
+    "🤔 I'm querying Instantly, not your life choices. Loading…",
 ]
 
 _ANALYTICS_AI_FAIL_SNARK = [
@@ -3035,6 +3076,11 @@ _ANALYTICS_AI_FAIL_SNARK = [
     "❌ That prompt frightened the oracle. Logs; apologize to mathematics.",
     "❌ The model took one look and chose violence. Logs.",
     "❌ Not even a stern look will fix that prompt. Logs.",
+    "❌ The model saw your question and went for a walk. Logs.",
+    "❌ That ask needs fewer vibes and more nouns. Logs.",
+    "❌ AI refused on principle. I respect that. Logs.",
+    "❌ I'd blame Mercury retrograde, but it's your prompt. Logs.",
+    "❌ The oracle is on strike. Scab model unavailable. Logs.",
 ]
 
 # Giphy CDN GIFs (Parks & Recreation / Ron Swanson vibes) — HTTPS, works with Telegram sendAnimation.
@@ -3050,6 +3096,13 @@ _RON_TG_ANIMATIONS: List[Tuple[str, str]] = [
     ("https://media.giphy.com/media/26gsobowozGM9umBi/giphy.gif", "Good enough for government work."),
     ("https://media.giphy.com/media/LVIro2GpAVG6c/giphy.gif", "I'll allow it."),
     ("https://media.giphy.com/media/13CoXDiaCcCoyk/giphy.gif", "I've seen worse decks."),
+    ("https://media.giphy.com/media/26gsobowozGM9umBi/giphy.gif", "The internet has spoken. It's underwhelmed."),
+    ("https://media.giphy.com/media/LVIro2GpAVG6c/giphy.gif", "Keep typing. I'll wait. Wood taught me patience."),
+    ("https://media.giphy.com/media/l3V0j3ytFyGHkiE3K/giphy.gif", "Numbers. The only drama I endorse."),
+    ("https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif", "Ship it. Or don't. The CSV won't cry."),
+    ("https://media.giphy.com/media/3o7abldj0b3rxrZUxW/giphy.gif", "Fine. Next."),
+    ("https://media.giphy.com/media/3o7btZ0t7Btg787ZNu/giphy.gif", "Ask again when you've had protein."),
+    ("https://media.giphy.com/media/13CoXDiaCcCoyk/giphy.gif", "Hmm. Still better than a webinar."),
 ]
 
 # Unknown slash command: rotate through what Mailclaw does (not analytics-only). Plain text.
@@ -3074,6 +3127,14 @@ _TG_UNKNOWN_USECASE_REPLIES: List[str] = [
     "credit line /balance, file-based verification — pick one. /help",
     "That slash isn't on the menu. I do analytics, yes — but also balance checks, CSV pipeline verify, "
     "and plain-text questions without a slash. /help lists all of it.",
+    "Unknown command. Think of me as a Swiss Army knife that judges you: /balance, file uploads, /analytics, /ask, /help.",
+    "Never seen it. I live on the internet so you don't have to — credits, CSV verify, Instantly reports, AI asks.",
+    "Not listed. This isn't a one-feature bot; it's a whole workshop: verify, balance, ask, export, repeat. /help",
+    "Invalid slash. Menu in plain English: check credits, verify a list, pull a report, interrogate data with /ask.",
+    "Doesn't ring a bell. Mailclaw does four things loudly and one thing quietly: math. See /help.",
+    "Wrong. I'm not 'the analytics bot' — I'm the ops pocket-knife: Reoon, Instantly, spreadsheets, sass. /help",
+    "Unknown. If your finger slipped, forgive it. If it didn't, read /help anyway.",
+    "That command is fiction. Non-fiction lives in /help — credits, uploads, analytics, natural-language /ask.",
 ]
 
 # Hostile unknown commands: Ron Swanson–style verbal riposte — cutting, "offensive" to bad ideas,
@@ -3096,6 +3157,20 @@ _TG_UNKNOWN_RON_CLAPBACK: List[str] = [
     "That message wouldn't win a debate against a stapler. Try /help with both eyes open.",
     "You're loud, you're wrong, and you're still one menu away from competence. /help",
     "Save the performance for community theater. This is a bot — type a command or leave.",
+    "That was the online equivalent of yelling into a mailbox. The mailbox sent you to /help.",
+    "I've seen stronger takes from a fortune cookie. And those come with shrimp.",
+    "You brought passion. You forgot syntax. /help fixes one of those.",
+    "That message was a cry for help disguised as a slash command. I heard you. /help heard you louder.",
+    "Somewhere, a router sighed. Try /help before you make it cry again.",
+    "You're not wrong — you're just wrong loudly. Volume isn't a feature. /help is.",
+    "I'd offer you a seat, but you already threw it. /help",
+    "That was a swing and a miss. I'm not the bleachers — I'm the scoreboard. /help",
+    "The internet saw that. The internet is not impressed. /help",
+    "You typed like you were being chased. Slow down. Read /help. Breathe through your nose.",
+    "Bold of you to audition in my DMs. Callback: no. Read /help.",
+    "If that was strategy, I've seen better plans on a napkin — and those had gravy stains.",
+    "You're one bad command away from becoming a cautionary tale. /help is your exit ramp.",
+    "That slash had confidence. It lacked merit. Story of the internet. /help",
 ]
 
 
@@ -3228,7 +3303,7 @@ def _period_conversation_note(
             f"\n\n📆 I'm showing this week ({start_date} → {end_date}). "
             f"Last week was {last_week_start.isoformat()} → {last_week_end.isoformat()}. "
             f"Want that or month-to-date? Say “last week”, “this month”, or a custom range next message. "
-            f"The week waits for no one — except maybe a brisket."
+            f"The week waits for no one — except maybe a brisket. If you need drama, watch television."
         )
     elif (
         start_date == last_week_start.isoformat()
@@ -3237,13 +3312,13 @@ def _period_conversation_note(
         chunks.append(
             f"\n\n📆 I'm showing last week ({start_date} → {end_date}). "
             f"This week is {this_week_start} → {this_week_end}. Say something if you want a different window. "
-            f"Nostalgia is for photographs, not reply rates."
+            f"Nostalgia is for photographs, not reply rates. History belongs in a museum — your pipeline lives today."
         )
     elif date_defaulted_this_month:
         chunks.append(
             f"\n\n📅 I'm showing this month to date ({start_date} → {end_date}) — you didn't name dates. "
             f"Say “this week”, “last week”, “last month”, or “all time” if you want something else. "
-            f"Specify dates next time; mind-reading is for charlatans."
+            f"Specify dates next time; mind-reading is for charlatans and the internet's comment sections."
         )
         if t.day <= 7:
             prev_end = t.replace(day=1) - timedelta(days=1)
@@ -3258,7 +3333,7 @@ def _period_conversation_note(
     ):
         chunks.append(
             f"\n\n📅 I'm showing this calendar month ({start_date} → {end_date}). "
-            f"Want last month or this week only? Say so. The calendar is merciless."
+            f"Want last month or this week only? Say so. The calendar is merciless — like a deadline with a grudge."
         )
 
     return "".join(chunks)
@@ -3768,7 +3843,7 @@ def analytics_ask(
                 question, start_date, end_date, date_defaulted_this_month
             )
             import random as _rnd
-            _foot_p = 0.88 if _ask_tone_stress(question) else 0.68
+            _foot_p = 0.92 if _ask_tone_stress(question) else 0.78
             if _rnd.random() < _foot_p:
                 txt += _rnd.choice(_ASK_SNARK_FOOTERS)
         except Exception:
@@ -4023,6 +4098,22 @@ def cmd_bot(_args):
         "Morning. Coffee is for closers; CSV is for grown-ups.",
         "Hey. Talk to the API — I'm just the messenger with attitude.",
         "Hello. I don't trust luck. I trust denominators.",
+        "Hi. The internet is full of lies. This reply isn't one — /ask something.",
+        "Hey. I came here to chew gum and count replies. I'm out of gum.",
+        "Morning. Say 'synergy' again. I dare you.",
+        "Hello. I don't do 'vibes.' I do variance.",
+        "Hi. Talk to me like I'm a spreadsheet — clearly, in rows.",
+        "Hey. I'm like a library: quiet, useful, and judging your subject lines.",
+        "Hello. I believe in two things: breakfast and statistically significant samples.",
+        "Hi. Your inbox called. It wants adulthood. /ask",
+        "Hey. Less LinkedIn. More literals.",
+        "Morning. I don't stream opinions. I fetch facts.",
+        "Hello. I have the time. I don't have patience for fluff.",
+        "Hi. Cold email is a sport. I keep score.",
+        "Hey. I'm the internet's least disappointing notification.",
+        "Hello. I speak fluent CSV and disappointed silence.",
+        "Hi. Make it a question, not a TED talk.",
+        "Hey. Wi‑Fi brought you here. Dignity is optional. /ask",
     ]
 
     SNARKY_GREET_RUDE=[
@@ -4034,13 +4125,22 @@ def cmd_bot(_args):
         "Hi. Whatever's broken, it's probably not the bacon. /ask",
         "Hello. Yell into a pillow. Then ask for metrics.",
         "Hey. I don't do tantrums. I do tallies.",
+        "Hi. Whatever you read on the internet five minutes ago — forget it. /ask",
+        "Hello. Caps lock is not a personality. Lowercase your rage, then /ask.",
+        "Hey. You're one notification away from serenity. It's called /help.",
+        "Hi. The internet rewards brevity. So do I.",
+        "Hello. If you're typing with your forehead, stop. /ask",
+        "Hey. Rage-clicking won't fix your pipeline. Words might.",
+        "Hi. I've seen calmer flame wars on a barbecue forum.",
+        "Hello. Save the novel for Substack. Give me a question.",
+        "Hey. Your router survived worse. So can you. /ask",
     ]
 
     def _tg_ask_usage_markdown() -> str:
         """Help text for /ask including optional profile and configured profile names."""
         ap = analytics_profiles_all()
         parts = [
-            "*Ask analytics (live Instantly data)* — *tone:* Ron Swanson if payroll depended on your reply rate (deadpan, anti-meeting, pro-bacon).",
+            "*Ask analytics (live Instantly data)* — *tone:* maximum Ron per kilobyte: deadpan, anti-meeting, pro-bacon, anti-jargon, internet-native one-liners welcome.",
             "",
             "*Dates:* Say *this week*, *last month*, or a range. If you say nothing about time, Mailclaw uses *this month to date* (1st → today). Say *all time* for lifetime.",
             "",
@@ -4067,7 +4167,7 @@ def cmd_bot(_args):
 
     def _tg_help_examples_markdown() -> str:
         return (
-            "*Real-life examples* (swap `will` for your profile) — *attitude inspired by Ron Swanson; numbers are real.*\n\n"
+            "*Real-life examples* (swap `will` for your profile) — *Ron Swanson energy on full volume; numbers stay non-fiction.*\n\n"
             "*Will + downloads (most common):*\n"
             "• `/ask will download full analytics excel for this month`\n"
             "• `/ask will export csv — this week`\n"
@@ -4090,7 +4190,7 @@ def cmd_bot(_args):
         if not ok_fn(u.effective_user.id): return
         await u.message.reply_text(
             "🍬 *Mailclaw* — cold email analytics from your pocket.\n"
-            "_If Ron Swanson had to run Instantly: fewer words, harder numbers, zero town halls._\n\n"
+            "_If Ron Swanson had to run Instantly: fewer words, harder numbers, zero town halls, full inbox clarity._\n\n"
             "*Commands:*\n"
             "/analytics — full report (lists profiles)\n"
             "/analytics `will` — one profile\n"
@@ -4121,10 +4221,10 @@ def cmd_bot(_args):
         raw = (u.message.text or "").strip()
         if _tg_unknown_is_disrespectful(raw):
             body = _random.choice(_TG_UNKNOWN_RON_CLAPBACK) + "\n\n/help"
-            gif_p = 0.42
+            gif_p = 0.50
         else:
             body = _random.choice(_TG_UNKNOWN_USECASE_REPLIES) + "\n\n/help"
-            gif_p = 0.28
+            gif_p = 0.35
         await u.message.reply_text(body)
         await _tg_maybe_ron_animation(u.message, gif_p)
 
