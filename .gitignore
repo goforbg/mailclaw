@@ -1,0 +1,7 @@
+.env
+*.pyc
+__pycache__/
+.mailclaw/
+*.xlsx
+*.csv
+mailclaw_debug.log
