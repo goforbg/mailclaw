@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-██╗      █████╗ ██████╗ ██████╗ ██╗   ██╗
-██║     ██╔══██╗██╔══██╗██╔══██╗██║   ██║
-██║     ███████║██║  ██║██║  ██║██║   ██║
-██║     ██╔══██║██║  ██║██║  ██║██║   ██║
-███████╗██║  ██║██████╔╝██████╔╝╚██████╔╝
-╚══════╝╚═╝  ╚═╝╚═════╝ ╚═════╝  ╚═════╝
-         Cold Email Pipeline v2.0
+ __  __       _ _      _
+|  \/  | __ _(_) | ___| | __ _ _      __
+| |\/| |/ _` | | |/ __| |/ _` \ \ /\ / /
+| |  | | (_| | | | (__| | (_| |\ V  V /
+|_|  |_|\__,_|_|_|\___|_|\__,_| \_/\_/
+      Cold Email Pipeline v2.0
 
 STANDALONE COMMANDS
   python mailclaw.py                 Full interactive pipeline
@@ -27,6 +26,10 @@ REQUIRED ENV VARS (or set via config):
   OPENAI_API_KEY
   REOON_API_KEY_1 ... REOON_API_KEY_N
   INSTANTLY_API_KEY
+
+OPTIONAL (enrichment — live Google via Serper before Gemini, 2 queries/row):
+  SERPER_API_KEY   or  mailclaw config → Serper API key
+  mailclaw enrich --no-serper   to disable when key is set
 
 CONFIG: ~/.mailclaw/config.json (local CLI) — or env-only on Railway (see MAILCLAW_CONFIG_SOURCE)
 PROFILES: ~/.mailclaw/profiles/<name>.json
@@ -137,12 +140,11 @@ def _enable_debug_logging():
 #  BRANDING
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LOGO = """[bold yellow]
- ██╗      █████╗ ██████╗ ██████╗ ██╗   ██╗
- ██║     ██╔══██╗██╔══██╗██╔══██╗██║   ██║
- ██║     ███████║██║  ██║██║  ██║██║   ██║
- ██║     ██╔══██║██║  ██║██║  ██║██║   ██║
- ███████╗██║  ██║██████╔╝██████╔╝╚██████╔╝
- ╚══════╝╚═╝  ╚═╝╚═════╝ ╚═════╝  ╚═════╝[/]
+ __  __       _ _      _
+|  \/  | __ _(_) | ___| | __ _ _      __
+| |\/| |/ _` | | |/ __| |/ _` \ \ /\ / /
+| |  | | (_| | | | (__| | (_| |\ V  V /
+|_|  |_|\__,_|_|_|\___|_|\__,_| \_/\_/[/]
 [dim] cold email pipeline  •  v2.0[/]
 """
 
@@ -164,6 +166,14 @@ def out_name(stem: str, suffix: str) -> str:
     s   = re.sub(r"_+", "_", s).strip("_")
     return f"{s}_{suffix}_{tag}.csv"
 
+
+def out_name_timestamp(stem: str, suffix: str) -> str:
+    """Same as out_name but includes HHMM for review samples (unique per run)."""
+    tag = datetime.now().strftime("%d_%b_%y_%H%M").lower()
+    s   = re.sub(r"[\s()]+", "_", stem)
+    s   = re.sub(r"_+", "_", s).strip("_")
+    return f"{s}_{suffix}_{tag}.csv"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  CONFIG
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -175,11 +185,15 @@ DEFAULT_CONFIG = {
     "model_key_pools_by_client": {},  # client_slug -> {provider: [keys]}
     "telegram_token":         "",
     "telegram_allowed_users": [],
+    "serper_api_key":         "",   # optional: Serper.dev — live Google search before Gemini enrich
     "daily_limit":            2000,
     "reverify_days":          7,
     "rate_limit_delay":       0.12,
     "default_profile":        "generic",
 }
+
+# Serper.dev: billed per search (~$1 / 1k queries on common tiers)
+SERPER_COST_PER_QUERY = 0.001
 
 def _env_numbered_strings(base: str) -> List[str]:
     """Read BASE, BASE_2, BASE_3, ... from the environment (non-empty values only)."""
@@ -302,6 +316,9 @@ def _cfg_from_env() -> dict:
     v = os.environ.get("TELEGRAM_TOKEN", "") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if v:
         c["telegram_token"] = v.strip()
+    sk = os.environ.get("SERPER_API_KEY", "").strip()
+    if sk:
+        c["serper_api_key"] = sk
     raw = os.environ.get("TELEGRAM_ALLOWED_USERS", "")
     if raw:
         try:
@@ -375,6 +392,11 @@ def cfg_load() -> dict:
                 c["telegram_allowed_users"] = [int(x.strip()) for x in raw.split(",") if x.strip()]
             except Exception:
                 pass
+
+    if not c.get("serper_api_key"):
+        sk = os.environ.get("SERPER_API_KEY", "").strip()
+        if sk:
+            c["serper_api_key"] = sk
 
     # ── Instantly: INSTANTLY_CLIENT_<NAME>=<api_key> ─────────────────────────
     env_clients = {k[len("INSTANTLY_CLIENT_"):].lower(): v
@@ -506,6 +528,238 @@ def state_load(fp: str) -> dict:
 def state_save(fp: str, s: dict):
     (STATE_DIR / f"{fp}.json").write_text(json.dumps(s, indent=2))
 
+# ── 4DD v9 enrichment (from 4dd_email_generator_v9) — strict company / competitor ID ──
+ENRICH_SERPER_DISAMBIGUATION_APPEND = """
+═══════════════════════════════════════════════════════
+SERPER / G2 NOISE — REJECT WRONG-INDUSTRY "COMPETITORS"
+═══════════════════════════════════════════════════════
+- UX / design / research studios (UX agency, product design, user research): NEVER name B2B pricing optimization,
+  CPQ, or competitive-pricing SaaS (e.g. Competera, Pricefx, Vendavo, PROS) as competitors — different buyers entirely.
+- Cable MSOs, telecom operators, tower/fiber vendors: NEVER name drone inventory, warehouse-only robotics, or unrelated vertical SaaS as competitors unless the prospect clearly operates in that same niche.
+- Managed IT / MSP / IT services: NEVER name consumer electronics retailers or e-commerce marketplaces (e.g. Newegg) as competitors.
+- If Serper snippets are clearly about a different company or wrong industry → competitor_name = null, email_angle = sales_intel, confidence ≤ 35. Do NOT output high confidence for a mismatched competitor."""
+
+ENRICHMENT_SYSTEM_PROMPT_4DD_V9 = """You are a B2B competitive research analyst helping 4D Due Diligence (4DD) find the best cold email angle for each prospect.
+
+4DD sells: bespoke competitive intelligence reports. They interview former employees of a prospect's competitor and deliver written reports on real pricing, sales playbooks, product weaknesses, client lists, roadmap direction. First interview at no cost. Projects range $10K-$35K.
+
+═══════════════════════════════════════════════════════
+CRITICAL: COMPANY IDENTITY VALIDATION (read this first)
+═══════════════════════════════════════════════════════
+You will receive live search results. Before using ANY search result:
+
+1. VERIFY the search result is about THIS EXACT COMPANY — match on domain, not just name.
+   - Prospect domain: extract from website or email field
+   - If a search result is about "Lunar" but prospect is "Lunatech" → IGNORE that result
+   - If a search result is about "T-Mobile" but prospect is "T-Rex Software" → IGNORE that result
+   - Similar-sounding names are NOT the same company
+
+2. USE TITLE + WEBSITE to anchor the industry FIRST. Then find competitors in that industry.
+   - "Owner/Founder @ lunatechit.com" → search what lunatechit.com actually does first
+   - Do NOT rely on G2 categories for similarly-named companies
+
+3. If search results contain no verified info about the exact prospect → use job title + domain
+   signals only to infer industry and angle. Set confidence ≤ 40.
+
+4. NEVER use a competitor from a different industry just because it appeared in search results
+   alongside a similar company name. Salesforce is NOT a competitor to an MSP/IT reseller.
+═══════════════════════════════════════════════════════
+
+KNOWN PAYING CUSTOMERS — ICP anchors:
+Telco/software: Amdocs (BSS/OSS, $4.5B), Radcom (5G assurance, $71M), Allot (DPI/security, $73M)
+Enterprise tech: Applied Materials (semiconductor equip, $28B), BearingPoint (consulting, $1B), Sapiens (insurtech, $500M)
+SaaS: Propel Software (PLM/QMS, $27M), Wire (secure comms, $7M), Maestra (martech, $3M), RadiusPoint (TEM, $2M)
+Other: Gather.AI (drone inventory), Loadbalancer.org (network LB), Intenseye (warehouse safety AI)
+
+TELCO / CONNECTIVITY / NETWORK (this is a telco list — most prospects are here):
+- BSS/OSS platforms: Amdocs, Ericsson BSS, Nokia BSS, Huawei, Netcracker, CSG Systems, Comverse, Optiva
+- 5G / network assurance: Netscout, VIAVI Solutions, Nokia AVA, Empirix, JDSU
+- DPI / network security: Sandvine, Cisco, Enea (Qosmos), Sycope, Procera
+- Telecom expense management (TEM): Tangoe, Calero, Cimpl, One Source, Sakon
+- Tower / infrastructure: Crown Castle, SBA Communications, Tillman Infrastructure, Vertical Bridge
+- UCaaS / cloud comms: RingCentral, 8x8, Vonage, Dialpad, Zoom Phone, Lumen, Nextiva
+- ISP / CLEC / MVNO: Lumen, Zayo, Windstream, Consolidated, MetroNet, TDS Telecom
+- Fiber / broadband: Frontier, Brightspeed, Ting, Consolidated Communications
+- Contact center: NICE, Genesys, Avaya, Verint, Five9, Concentrix, Talkdesk
+- Telecom reseller / MSP / VAR: Telarus, Avant, Intelisys, Masergy, Windstream Wholesale
+- Wireless / antenna hardware: Amphenol, CommScope, Taoglas, Molex, Rosenberger
+- Cable / structured cabling: Belden, Legrand, Panduit, Anixter, Leviton
+- Network equipment: Cisco, Juniper, Arista, Ribbon Communications, ADTRAN
+
+GENERAL B2B (non-telco):
+- PLM: PTC Windchill, Siemens Teamcenter, Dassault ENOVIA, Arena PLM
+- Load balancing: F5 Networks, Citrix ADC, HAProxy, A10 Networks
+- Martech: Klaviyo, Braze, Salesforce MC, SAP Emarsys
+- IT services / MSP: Kyndryl, Accenture, DXC, Unison, Presidio, Trace3, ePlus
+
+PAIN PATTERNS by role:
+- CEO/Founder/Owner: existential competitive threat, pricing they're losing deals on
+- VP/Director Sales: what competitors are actually discounting, their close rates and playbook
+- VP/Director Product: competitor roadmap direction before they ship it
+- CTO/Engineering: tech stack gaps, build-vs-buy intel from competitor engineers
+- VP Marketing: competitor messaging, what they promise vs what they deliver
+
+Return ONLY valid JSON, no explanation, no markdown:
+{
+  "competitor_name": string or null,
+  "competitor_2":    string or null,
+  "deal_size_range": string or null,
+  "g2_category":     string or null,
+  "email_angle":     "competitor | pricing_blind_spot | roadmap_gap | market_positioning | sales_intel",
+  "competitor_roadmap_gap": string or null,
+  "confidence":      integer,
+  "reasoning":       string
+}
+
+Competitor validity — ALL three must be true:
+1. Same buyer (same department, company size, pain point)
+2. Similar ACV (within 3x — not enterprise vs SMB)
+3. Directly replaceable (would appear on same shortlist)
+If any fail → competitor_name = null, angle = sales_intel, confidence ≤ 35.
+
+Confidence:
+- 80-100: named competitor confirmed from verified search results for THIS company
+- 50-79:  competitor inferred from domain/title signals, plausible but not confirmed
+- 25-49:  weak signal, angle is a guess
+- 0-24:   unknown company, no useful signals""" + ENRICH_SERPER_DISAMBIGUATION_APPEND
+
+# 4DD v9 reply-based CTAs (rotated per row — matches 4dd_email_generator_v9 CTA_POOL)
+COPY_CTA_POOL_4DD = [
+    "which competitor would you most want intel on, and what specifically would help you the most?",
+    "if you could pick one rival to get the real story on - pricing, sales plays, roadmap - who would it be?",
+    "which competitor keeps coming up in deals you're losing? that's usually where we start.",
+    "name one competitor you'd want us to dig into - happy to show you exactly what that report looks like.",
+]
+
+# If the model admits the named competitor fails validity checks in `reasoning`, strip it (v9 behavior).
+_ENRICH_COMPETITOR_NEGATIVE_REASONING_PHRASES = (
+    "different market",
+    "different scale",
+    "not directly",
+    "different buyer",
+    "not comparable",
+    "much larger",
+    "enterprise vs",
+    "smb vs",
+    "different tier",
+    "wrong industry",
+    "not a competitor",
+    "not a direct competitor",
+    "unrelated company",
+    "unrelated",
+    "different industry",
+    "different segment",
+    "not the same market",
+)
+
+
+def _enrich_apply_competitor_guard(enr: dict, profile: dict) -> None:
+    """
+    Post-parse: if reasoning text signals a bad/wrong competitor pick, clear names and fall back
+    to sales_intel (matches 4dd_email_generator_v9 call_enrichment).
+    Runs only when profile asks for competitor_name in enrichment outputs.
+    """
+    if not isinstance(enr, dict):
+        return
+    outs = profile.get("enrichment_output_fields") or []
+    if "competitor_name" not in outs:
+        return
+    note = str(enr.get("reasoning") or "").lower()
+    if not note.strip():
+        return
+    if not any(p in note for p in _ENRICH_COMPETITOR_NEGATIVE_REASONING_PHRASES):
+        return
+    enr["competitor_name"] = ""
+    enr["competitor_2"] = ""
+    if "competitor_roadmap_gap" in enr:
+        enr["competitor_roadmap_gap"] = ""
+    enr["email_angle"] = "sales_intel"
+    try:
+        c = int(enr.get("confidence", 50) or 0)
+    except (TypeError, ValueError):
+        c = 50
+    enr["confidence"] = min(c, 35)
+
+
+_UX_STUDIO_RE = re.compile(
+    r"\bux\b|user experience|ux design|design studio|design agency|research studio|usability|"
+    r"product design|ui/ux|\bui ux\b",
+    re.IGNORECASE,
+)
+_MSP_CONTEXT_RE = re.compile(
+    r"managed service|managed it|\bmsp\b|it services|outsourced it|systems integrator",
+    re.IGNORECASE,
+)
+_TELCO_CONTEXT_RE = re.compile(
+    r"\bcable\b|telecom|fiber|tower\b|broadband|\bmvno\b|wireless infrastructure|"
+    r"internet service|colo\b|colocation",
+    re.IGNORECASE,
+)
+_PRICING_SAAS_SUBSTR = ("competera", "pricefx", "vendavo")
+
+
+def _enrich_apply_competitor_industry_guard(row: dict, enr: dict, profile: dict) -> None:
+    """
+    Catch obvious Serper/industry mismatches the model still labels 65-85 confidence.
+    """
+    if not isinstance(enr, dict):
+        return
+    outs = profile.get("enrichment_output_fields") or []
+    if "competitor_name" not in outs:
+        return
+
+    def _strike() -> None:
+        enr["competitor_name"] = ""
+        enr["competitor_2"] = ""
+        if "competitor_roadmap_gap" in enr:
+            enr["competitor_roadmap_gap"] = ""
+        enr["email_angle"] = "sales_intel"
+        try:
+            c = int(enr.get("confidence", 50) or 0)
+        except (TypeError, ValueError):
+            c = 50
+        enr["confidence"] = min(c, 34)
+
+    company = str(row.get("company_name") or "").strip()
+    title = str(row.get("job_title") or row.get("title") or "").strip()
+    industry = str(row.get("industry") or row.get("Industry") or "").strip()
+    blob = f"{company} {title} {industry}".lower()
+    cn = (enr.get("competitor_name") or "").strip().lower()
+    c2 = (enr.get("competitor_2") or "").strip().lower()
+    if not cn and not c2:
+        return
+
+    # UX / design studio vs pricing SaaS
+    if _UX_STUDIO_RE.search(blob) or "ux centers" in blob:
+        if any(s in cn for s in _PRICING_SAAS_SUBSTR) or any(s in c2 for s in _PRICING_SAAS_SUBSTR):
+            _strike()
+            return
+
+    # MSP / IT services vs consumer retail
+    cl = company.lower()
+    its_co = cl == "its" or cl.startswith("its ") or cl.endswith(" its") or " its " in f" {cl} "
+    if _MSP_CONTEXT_RE.search(blob) or its_co:
+        if "newegg" in cn or "newegg" in c2:
+            _strike()
+            return
+
+    # Telecom / cable vs Gather.AI-style mismatch
+    if _TELCO_CONTEXT_RE.search(blob) or _TELCO_CONTEXT_RE.search(company.lower()):
+        if "gather" in cn or "gather" in c2:
+            _strike()
+
+
+def _enrich_copy_cta_pair(profile: dict, row_index: int) -> Tuple[str, str]:
+    """Return (email1_cta, email2_cta) for this row; offset so e1 != e2 (v9 behavior)."""
+    if not profile.get("copy_cta_pool"):
+        c = str(profile.get("copy_cta") or "worth 15 min this week?").strip()
+        return c, c
+    i = max(0, int(row_index)) % len(COPY_CTA_POOL_4DD)
+    c1 = COPY_CTA_POOL_4DD[i]
+    c2 = COPY_CTA_POOL_4DD[(i + 2) % len(COPY_CTA_POOL_4DD)]
+    return c1, c2
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  PROFILE SYSTEM
 #  ~/.mailclaw/profiles/<name>.json — shared enrichment configs
@@ -527,6 +781,9 @@ PROFILE_TEMPLATE = {
     "copy_max_tokens":           600,
     "enrichment_temperature":    0.3,
     "copy_temperature":          1.0,
+    # After copy: QA detect + programmatic fix; optional AI regen for HARD issues
+    "enrichment_qa_pass":       True,
+    "enrichment_qa_ai_regen":   True,
     # Input fields forwarded to the model (can be customized)
     "input_fields": [
         "first_name","last_name","job_title","company_name",
@@ -565,10 +822,52 @@ PROFILE_TEMPLATE = {
     ),
     "copy_output_fields": ["email1_subject","email1_body","email2_subject","email2_body"],
     "copy_cta":           "worth 15 min this week?",
+    # When true, rotate 4DD reply CTAs per row (see COPY_CTA_POOL_4DD); ignores copy_cta for assembly
+    "copy_cta_pool":      False,
+    # Append Serper wrong-industry block when live search is on (skip if prompt already includes it)
+    "enrichment_serper_disambiguation": True,
     "sender_name":        "",
     # Custom variables: extra keys to always add to every output row (static values)
     "custom_static_vars": {},
 }
+
+
+def _default_profile_4dd_v9() -> dict:
+    """Seed profile aligned with 4dd_email_generator_v9 (competitor + Serper workflow)."""
+    p: Dict[str, Any] = json.loads(json.dumps(PROFILE_TEMPLATE))
+    p["name"] = "4dd"
+    p["display_name"] = "4DD — v9 competitor enrichment"
+    p["description"] = (
+        "Aligned with 4dd_email_generator_v9: company-identity checks, competitor validity rules, "
+        "telco/ICP anchors. Use with SERPER_API_KEY. For custom copy/CTA, duplicate and edit."
+    )
+    p["enrichment_system_prompt"] = ENRICHMENT_SYSTEM_PROMPT_4DD_V9
+    p["enrichment_output_fields"] = [
+        "competitor_name",
+        "competitor_2",
+        "deal_size_range",
+        "g2_category",
+        "email_angle",
+        "competitor_roadmap_gap",
+        "confidence",
+        "reasoning",
+    ]
+    p["input_fields"] = [
+        "first_name",
+        "last_name",
+        "job_title",
+        "company_name",
+        "website",
+        "linkedin_url",
+        "location",
+        "industry",
+        "employees",
+        "email",
+        "keywords",
+    ]
+    p["enrichment_max_tokens"] = 450
+    return p
+
 
 CLIENT_TEMPLATE = {
     "name":             "client_name",
@@ -592,6 +891,9 @@ def _ensure_default_profiles():
     p = PROFILES_DIR / "generic.json"
     if not p.exists():
         p.write_text(json.dumps(PROFILE_TEMPLATE, indent=2))
+    p4 = PROFILES_DIR / "4dd.json"
+    if not p4.exists():
+        p4.write_text(json.dumps(_default_profile_4dd_v9(), indent=2))
 
 def profile_load(name: str) -> Optional[dict]:
     _ensure_default_profiles()
@@ -814,8 +1116,28 @@ def ai_call(model_key: str, system: str, user: str,
     raise RuntimeError("ai_call exhausted retries")
 
 def parse_json(text:str)->dict:
-    text=re.sub(r"```[a-z]*","",text).strip().strip("`").strip()
-    return json.loads(text)
+    """
+    Parse model JSON; tolerate markdown fences and trailing prose after the object
+    (fixes json.loads 'Extra data' when the model appends text after the closing }).
+    """
+    if text is None or not str(text).strip():
+        return {}
+    s = str(text).strip()
+    s = re.sub(r"^```(?:json|JSON)?\s*", "", s)
+    s = re.sub(r"\s*```\s*$", "", s)
+    s = s.strip().strip("`").strip()
+    if not s:
+        return {}
+    dec = json.JSONDecoder()
+    i = s.find("{")
+    if i >= 0:
+        try:
+            obj, _end = dec.raw_decode(s, i)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+    return json.loads(s)
 
 def cheapest_available_model(client_slug: Optional[str] = None) -> Optional[str]:
     c = cfg_load()
@@ -1209,11 +1531,43 @@ def csv_read(path:Path)->Tuple[List[dict],List[str]]:
         r=csv.DictReader(f); rows=list(r); cols=list(r.fieldnames or [])
     return rows, cols
 
+def _canon_col(key:str)->str:
+    return re.sub(r"[^a-z0-9]+","",str(key).strip().lower())
+
+def _dedupe_row_columns(row:dict)->dict:
+    """
+    Deduplicate semantically identical columns (case/spacing/punctuation variants),
+    while preserving email variants (e.g. Email + email) by request.
+    """
+    out={}
+    seen={}
+    for k,v in row.items():
+        c=_canon_col(k)
+        if c=="email":
+            out[k]=v
+            continue
+        if c in seen:
+            keep=seen[c]
+            # If kept value is empty but duplicate has data, keep the data.
+            if str(out.get(keep,"")).strip()=="" and str(v).strip()!="":
+                out[keep]=v
+            continue
+        seen[c]=k
+        out[k]=v
+    return out
+
 def csv_write(rows:List[dict],path:Path):
     if not rows: return
+    rows=[_dedupe_row_columns(r) for r in rows]
     path.parent.mkdir(parents=True,exist_ok=True)
+    fieldnames=[]
+    seen=set()
+    for r in rows:
+        for k in r.keys():
+            if k not in seen:
+                seen.add(k); fieldnames.append(k)
     with open(path,"w",newline="",encoding="utf-8") as f:
-        w=csv.DictWriter(f,fieldnames=list(rows[0].keys()))
+        w=csv.DictWriter(f,fieldnames=fieldnames)
         w.writeheader(); w.writerows(rows)
     console.print(f"[green]✓[/] Written: [yellow]{path.name}[/] ({len(rows)} rows)")
 
@@ -1273,13 +1627,497 @@ def pick_csv()->Optional[Path]:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _enrich_lock = threading.Lock()
 
-def _build_enrich_input(row:dict,profile:dict)->str:
+def _enrich_serper_key(cli_value: Optional[str], no_serper: bool = False) -> str:
+    """Resolve Serper API key: CLI '' disables; None = ~/.mailclaw + SERPER_API_KEY env."""
+    if no_serper:
+        return ""
+    if cli_value is not None:
+        return (cli_value or "").strip()
+    c = cfg_load()
+    return (str(c.get("serper_api_key") or "").strip()
+            or os.environ.get("SERPER_API_KEY", "").strip())
+
+def serper_search(query: str, api_key: str, num: int = 5) -> str:
+    """Call Serper.dev Google Search API; return top snippets as plain text."""
+    try:
+        r = requests.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query, "num": num},
+            timeout=12,
+        )
+        r.raise_for_status()
+        organic = r.json().get("organic") or []
+        lines: List[str] = []
+        for item in organic[:4]:
+            title = item.get("title") or ""
+            snippet = item.get("snippet") or ""
+            if title or snippet:
+                lines.append(f"- {title}: {snippet}")
+        return "\n".join(lines)
+    except Exception as e:
+        log.debug("serper_search failed q=%r: %s", query[:80], e)
+        return ""
+
+def _fetch_enrichment_serper_snippets(row: dict, api_key: str) -> Tuple[str, int]:
+    """Two queries per row (matches 4DD v9). Returns (combined text, query count for billing)."""
+    if not api_key:
+        return "", 0
+    company = str(row.get("company_name") or "").strip()
+    if not company:
+        return "", 0
+    industry = str(row.get("industry") or row.get("Industry") or "").strip()
+    q1 = f"{company} competitors b2b software pricing"
+    q2 = f"{company} {industry} alternative vendor".strip() if industry else f"{company} competitors software"
+    r1 = serper_search(q1, api_key)
+    r2 = serper_search(q2, api_key)
+    combined = "\n".join(x for x in (r1, r2) if x)
+    return combined, 2
+
+def _build_enrich_input(row:dict,profile:dict,serper_snippets:str="")->str:
     fields={f:str(row.get(f,"")).strip()
             for f in profile.get("input_fields",TARGET_FIELDS)
             if str(row.get(f,"")).strip().lower() not in ("","nan","none")}
-    return f"Prospect data:\n{json.dumps(fields,indent=2)}"
+    base = f"Prospect data:\n{json.dumps(fields,indent=2)}"
+    if serper_snippets.strip():
+        base += (
+            "\n\nLIVE SEARCH RESULTS (identify real competitors for THIS prospect only):\n"
+            + serper_snippets.strip()
+            + "\n\nVerify each result matches the prospect's domain/website before using it; "
+            "discard hits that refer to a similarly named but different company or wrong industry."
+        )
+    return base
 
-def _enrich_one(row:dict,profile:dict)->Tuple[dict,float]:
+def _sentence_case(text:str)->str:
+    s=re.sub(r"\s+"," ",str(text or "").strip())
+    if not s: return ""
+    return re.sub(r"(^|[.!?]\s+)([a-z])",lambda m:f"{m.group(1)}{m.group(2).upper()}",s)
+
+def _strip_leading_first_name(text:str,first:str)->str:
+    """Remove 'Aaron, …' / 'Aaron - …' when line1 already has the greeting."""
+    s=str(text or "").strip()
+    fn=(first or "").strip()
+    if not s or not fn or fn.lower() in ("there","friend",""):
+        return s
+    s=re.sub(rf"^{re.escape(fn)}\s*,\s*","",s,flags=re.IGNORECASE)
+    s=re.sub(rf"^{re.escape(fn)}\s*[-–:]\s*","",s,flags=re.IGNORECASE)
+    return s.strip()
+
+def _strip_trailing_cta_bleed(
+    text: str,
+    cta: str,
+    extra_suffixes: Optional[List[str]] = None,
+) -> str:
+    """Haiku sometimes appends the CTA inside the body; strip before we add .cta column."""
+    s=str(text or "").strip()
+    if not s: return ""
+    suffixes=[
+        (cta or "").strip(),
+        "worth 15 min this week?",
+        "want me to send over a quick walkthrough? just reply and i'll get it to you",
+        "happy to send a sample report if useful - just reply",
+        "happy to send a sample report if useful",
+        "just reply and i'll get it to you",
+        "just reply",
+    ]
+    if extra_suffixes:
+        suffixes.extend(x for x in extra_suffixes if x and str(x).strip())
+    changed=True
+    while changed:
+        changed=False
+        low=s.lower()
+        for suf in suffixes:
+            if not suf: continue
+            sufl=suf.lower()
+            if low.endswith(sufl):
+                s=s[: -len(suf)].strip().rstrip(".,-– ")
+                low=s.lower()
+                changed=True
+    return s
+
+# ── Enrichment copy QA (4DD-style: detect → soft fix → optional Haiku regen) ──
+ENRICH_QA_GENERIC_SUBJECTS = {
+    "sales intel gap", "sales intel", "sales intelligence", "market intel",
+    "sales intel opportunity", "sales intel angle", "sales intel shortcut",
+    "quick question", "competitive intel", "quick call",
+    "re: quick question", "re: quick call", "re: competitive intel", "re: sales intel",
+}
+ENRICH_QA_CTA_PHRASES = [
+    r"worth\s+15\s+min",
+    r"happy\s+to\s+send\s+a\s+sample",
+    r"want\s+me\s+to\s+send",
+    r"just\s+reply\b",
+    r"15[\s\-]min\s+(this\s+week|call)",
+]
+ENRICH_QA_CTA_RE = re.compile("|".join(ENRICH_QA_CTA_PHRASES), re.IGNORECASE)
+ENRICH_QA_BODY_LINES = ["email1.line2", "email1.line3", "email2.line2", "email2.line3"]
+ENRICH_QA_SUBJECT_LINES = ["email1.subject", "email2.subject"]
+ENRICH_QA_BODY_SUBJECT = ENRICH_QA_BODY_LINES + ENRICH_QA_SUBJECT_LINES
+ENRICH_QA_REGEN_MAX_RETRIES = 3
+
+ENRICH_QA_REGEN_SYSTEM = """You fix broken cold emails for Will Hargreaves at 4D Due Diligence (4DD).
+
+4DD sells: competitive intelligence reports. We interview former employees of a prospect's
+competitor and deliver written reports on real pricing, sales playbook, product weaknesses,
+key clients, roadmap direction. First interview at no cost.
+
+You will be given a row with broken fields. Return ONLY valid JSON with fixed fields.
+
+RULES (non-negotiable):
+- email2_line2 and email2_line3 together must be EXACTLY 2 sentences
+- Sentence 1 (line2): specific pain or insight about their competitive situation
+- Sentence 2 (line3): what that intel changes / why it matters — end with a question
+- Entirely lowercase except "I" and proper nouns (company names, cities)
+- No em dashes (— or –). Use hyphen (-) if needed.
+- No URLs. No CTAs in body (CTA is added separately).
+- Never start with the prospect's first name
+- Never say "fully legal", "NDA", "ethical", "verified"
+- Under 50 words total for email2 body
+- If email1 body is also broken (starts with "We", generic), fix it too using pain-first structure:
+    line2: specific pain they likely have RIGHT NOW (no 4DD mention)
+    line3: what 4DD does and how it solves that pain + offer (first conversation at no cost)
+
+Return JSON with only the fields that need fixing:
+{
+  "email1.subject": "...",   (only if broken)
+  "email1.line2":   "...",   (only if broken)
+  "email1.line3":   "...",   (only if broken)
+  "email2.line2":   "...",   (required)
+  "email2.line3":   "..."    (required)
+}"""
+
+
+def _enrich_qa_detect_issues(row: dict) -> List[Tuple[str, str, str]]:
+    issues: List[Tuple[str, str, str]] = []
+    fn = (row.get("First Name") or row.get("first_name") or "").strip()
+
+    subj1 = str(row.get("email1.subject", "")).strip()
+    l2 = str(row.get("email1.line2", "")).strip()
+    l3 = str(row.get("email1.line3", "")).strip()
+    e2l2 = str(row.get("email2.line2", "")).strip()
+    e2l3 = str(row.get("email2.line3", "")).strip()
+
+    if not e2l2 and not e2l3:
+        issues.append(("HARD", "email2_empty", "email2.line2+line3 are both empty"))
+    else:
+        e2_body = " ".join(filter(None, [e2l2, e2l3]))
+        sents = [s for s in re.split(r"(?<=[.!?])\s+", e2_body.strip()) if s.strip()]
+        if len(sents) != 2:
+            sev = "SOFT" if len(sents) == 3 else "HARD"
+            issues.append((sev, f"email2_{len(sents)}_sentences",
+                           f"email2 has {len(sents)} sentences (want 2)"))
+
+    for field in ENRICH_QA_BODY_LINES:
+        val = str(row.get(field, "") or "")
+        if "—" in val or "–" in val:
+            issues.append(("SOFT", "em_dash", f"{field}: {val[:60]!r}"))
+
+    for field in ENRICH_QA_BODY_LINES:
+        val = str(row.get(field, "") or "")
+        if ENRICH_QA_CTA_RE.search(val) and len(val) < 90:
+            issues.append(("SOFT", "cta_in_body", f"{field}: {val[:60]!r}"))
+
+    if fn and l2:
+        if l2.lower().startswith(fn.lower() + ",") or l2.lower().startswith(fn.lower() + " -"):
+            issues.append(("SOFT", "first_name_repeated", f"line2 starts with name: {l2[:50]!r}"))
+
+    if re.match(r"^[Ww]e ", l2):
+        issues.append(("HARD", "starts_with_we", f"line2: {l2[:60]!r}"))
+
+    for field in ENRICH_QA_BODY_LINES:
+        val = str(row.get(field, "") or "")
+        if re.search(r"https?://|www\.", val):
+            issues.append(("SOFT", "url_in_body", f"{field}: {val[:60]!r}"))
+
+    if subj1.lower() in ENRICH_QA_GENERIC_SUBJECTS:
+        issues.append(("WARN", "generic_subject", f"{subj1!r}"))
+
+    line1 = str(row.get("email1.line1", "")).strip()
+    if line1 and not re.match(r"^[A-Z][a-z]+ -$", line1):
+        issues.append(("WARN", "line1_format", f"{line1!r}"))
+
+    return issues
+
+
+def _enrich_qa_fix_soft(row: dict) -> List[str]:
+    """Programmatic fixes only; mutates row in place."""
+    applied: List[str] = []
+    fn = (row.get("First Name") or row.get("first_name") or "").strip()
+
+    for field in ENRICH_QA_BODY_LINES:
+        val = str(row.get(field, "") or "")
+        if not val:
+            continue
+        orig = val
+
+        val = val.replace("—", " -").replace("–", "-")
+
+        if ENRICH_QA_CTA_RE.search(val) and len(val) < 90:
+            cleaned = ENRICH_QA_CTA_RE.sub("", val).strip().rstrip(".,?")
+            if len(cleaned) < 15:
+                val = ""
+            else:
+                val = cleaned
+
+        if field == "email1.line2" and fn:
+            val = re.sub(
+                r"^" + re.escape(fn) + r"[,\s]+[-:,]?\s*",
+                "",
+                val,
+                flags=re.IGNORECASE,
+            ).strip()
+
+        val = re.sub(r"https?://\S+", "", val).strip()
+        val = re.sub(r"www\.\S+", "", val).strip()
+
+        if val != orig:
+            applied.append(f"{field}: em_dash/cta/url fixed")
+            row[field] = val
+
+    e2l2 = str(row.get("email2.line2", "")).strip()
+    e2l3 = str(row.get("email2.line3", "")).strip()
+    e2_body = " ".join(filter(None, [e2l2, e2l3]))
+    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", e2_body.strip()) if s.strip()]
+    if len(sents) == 3:
+        row["email2.line2"] = sents[0]
+        row["email2.line3"] = sents[2]
+        applied.append("email2: trimmed 3→2 sentences")
+    elif len(sents) > 3:
+        row["email2.line2"] = sents[0]
+        row["email2.line3"] = sents[-1]
+        applied.append(f"email2: trimmed {len(sents)}→2 sentences")
+
+    for field in ENRICH_QA_SUBJECT_LINES:
+        val = str(row.get(field, "") or "")
+        if val and val != val.lower():
+            lower = val.lower()
+            if lower != val:
+                row[field] = lower
+                applied.append(f"{field}: lowercased")
+
+    return applied
+
+
+def _enrich_qa_merge_regen(obj: dict, result: dict, applied: List[str]) -> None:
+    """Apply model JSON keys (dots or underscores) onto result."""
+    if not obj:
+        return
+    want = [
+        "email1.subject", "email1.line2", "email1.line3",
+        "email2.line2", "email2.line3",
+    ]
+    for f in want:
+        v = obj.get(f)
+        if v is None:
+            v = obj.get(f.replace(".", "_"))
+        if v is None or str(v).strip() == "":
+            continue
+        result[f] = str(v).strip()
+        applied.append(f"AI fixed {f}")
+
+
+def _enrich_qa_postprocess_bodies(result: dict, view: dict, first: str, cta: str) -> None:
+    for prefix in ("email1", "email2"):
+        for suf in ("line2", "line3"):
+            kk = f"{prefix}.{suf}"
+            s = str(result.get(kk) or "").strip()
+            if not s:
+                view[kk] = s
+                continue
+            s = _strip_leading_first_name(s, first)
+            s = _strip_trailing_cta_bleed(s, cta)
+            s = _sentence_case(s)
+            result[kk] = s
+            view[kk] = s
+
+
+def _enrich_qa_regen_row(
+    model_key: str,
+    view: dict,
+    issues: List[Tuple[str, str, str]],
+    client_slug: Optional[str],
+) -> Tuple[Optional[dict], float]:
+    """Regenerate broken fields; returns (parsed dict or None, extra cost)."""
+    fn = (view.get("First Name") or view.get("first_name") or "").strip()
+    company = (view.get("Company Name") or view.get("company_name") or "").strip()
+    title = (
+        view.get("Job_Title")
+        or view.get("job_title")
+        or view.get("Title")
+        or view.get("title")
+        or ""
+    )
+    title = str(title).strip()
+    comp = str(view.get("competitor_name", "")).strip()
+    angle = str(view.get("email_angle", "sales_intel")).strip()
+    e1_l2 = str(view.get("email1.line2", "")).strip()
+    e1_l3 = str(view.get("email1.line3", "")).strip()
+    e2_l2 = str(view.get("email2.line2", "")).strip()
+    e2_l3 = str(view.get("email2.line3", "")).strip()
+    issue_str = "; ".join(x[1] for x in issues)
+
+    prompt = f"""Fix the broken email fields for this prospect.
+
+PROSPECT:
+  name:       {fn}
+  company:    {company}
+  title:      {title}
+  competitor: {comp or "none identified"}
+  angle:      {angle}
+
+CURRENT EMAIL1 BODY:
+  line2: {e1_l2!r}
+  line3: {e1_l3!r}
+
+CURRENT EMAIL2 BODY (broken):
+  line2: {e2_l2!r}
+  line3: {e2_l3!r}
+
+ISSUES TO FIX: {issue_str}
+
+Return JSON with fixed fields only."""
+
+    extra = 0.0
+    for attempt in range(ENRICH_QA_REGEN_MAX_RETRIES):
+        try:
+            text, t_in, t_out = ai_call(
+                model_key,
+                ENRICH_QA_REGEN_SYSTEM,
+                prompt,
+                max_tokens=400,
+                temperature=0.3,
+                client_slug=client_slug,
+            )
+            extra += ai_cost(model_key, t_in, t_out)
+            obj = parse_json(text)
+            if isinstance(obj, dict) and obj:
+                return obj, extra
+        except Exception as e:
+            log.warning("enrich QA regen attempt %s failed: %s", attempt + 1, e)
+            if attempt < ENRICH_QA_REGEN_MAX_RETRIES - 1:
+                time.sleep(2 ** attempt * 2)
+    return None, extra
+
+
+def _enrich_qa_apply(
+    row: dict,
+    profile: dict,
+    result: dict,
+    cp_key: str,
+    client_slug: Optional[str],
+) -> float:
+    """
+    Run detect → soft fix → optional AI regen on Instantly columns in result.
+    Sets qa_status, qa_issues, qa_fixes. Returns additional AI cost.
+    """
+    if not profile.get("enrichment_qa_pass", True):
+        return 0.0
+
+    has_copy = bool(
+        result.get("email1.line2")
+        or result.get("email2.line2")
+        or result.get("email1.subject")
+    )
+    if not has_copy:
+        result["qa_status"] = "no_copy_output"
+        result["qa_issues"] = ""
+        result["qa_fixes"] = ""
+        return 0.0
+
+    first = str(row.get("first_name", "there")).strip()
+    cta = profile.get("copy_cta", "worth 15 min this week?")
+
+    view: dict = {**row, **result}
+    issues0 = _enrich_qa_detect_issues(view)
+    if not issues0:
+        result["qa_status"] = "clean"
+        result["qa_issues"] = ""
+        result["qa_fixes"] = ""
+        return 0.0
+
+    applied = _enrich_qa_fix_soft(view)
+    for k in ENRICH_QA_BODY_SUBJECT:
+        if k in view:
+            result[k] = view[k]
+
+    _enrich_qa_postprocess_bodies(result, view, first, cta)
+    for k in ENRICH_QA_SUBJECT_LINES:
+        if k in view:
+            result[k] = view[k]
+
+    rem = _enrich_qa_detect_issues(view)
+    hard_remaining = [x for x in rem if x[0] == "HARD"]
+    extra_cost = 0.0
+
+    if not hard_remaining:
+        result["qa_status"] = "soft_fixed" if applied else "warn_only"
+        result["qa_issues"] = "; ".join(x[1] for x in issues0)
+        result["qa_fixes"] = "; ".join(applied) if applied else "none"
+        return extra_cost
+
+    if not profile.get("enrichment_qa_ai_regen", True):
+        result["qa_status"] = "still_broken"
+        result["qa_issues"] = "; ".join(x[1] for x in hard_remaining)
+        result["qa_fixes"] = (
+            ("; ".join(applied) if applied else "none") + " | skipped (enrichment_qa_ai_regen=false)"
+        )
+        return extra_cost
+
+    c = cfg_load()
+    prov = MODELS.get(cp_key, {}).get("provider", "")
+    if not prov or not _provider_has_keys(c, prov, client_slug):
+        result["qa_status"] = "still_broken"
+        result["qa_issues"] = "; ".join(x[1] for x in hard_remaining)
+        result["qa_fixes"] = (
+            ("; ".join(applied) if applied else "none") + " | no API key for copy model provider"
+        )
+        return extra_cost
+
+    log.info(
+        "enrich QA: regen row %s @ %s (%s)",
+        first,
+        (row.get("company_name") or "")[:40],
+        "; ".join(x[1] for x in hard_remaining),
+    )
+    regen, regen_cost = _enrich_qa_regen_row(cp_key, view, hard_remaining, client_slug)
+    extra_cost += regen_cost
+
+    if regen:
+        _enrich_qa_merge_regen(regen, result, applied)
+        for k in ENRICH_QA_BODY_SUBJECT:
+            if k in result:
+                view[k] = result[k]
+        _enrich_qa_postprocess_bodies(result, view, first, cta)
+        for k in ENRICH_QA_SUBJECT_LINES:
+            if k in result:
+                view[k] = result[k]
+
+        final_issues = _enrich_qa_detect_issues(view)
+        final_hard = [x for x in final_issues if x[0] == "HARD"]
+        if not final_hard:
+            result["qa_status"] = "ai_fixed"
+            result["qa_issues"] = "; ".join(x[1] for x in issues0)
+            result["qa_fixes"] = "; ".join(applied) if applied else "none"
+        else:
+            result["qa_status"] = "still_broken"
+            result["qa_issues"] = "; ".join(x[1] for x in final_hard)
+            result["qa_fixes"] = (
+                "; ".join(applied) if applied else "none"
+            ) + " | AI attempted but failed QA"
+    else:
+        result["qa_status"] = "still_broken"
+        result["qa_issues"] = "; ".join(x[1] for x in hard_remaining)
+        result["qa_fixes"] = ("; ".join(applied) if applied else "none") + " | AI call failed"
+
+    return extra_cost
+
+
+def _enrich_one(
+    row: dict,
+    profile: dict,
+    serper_key: str = "",
+    row_index: int = 0,
+) -> Tuple[dict, float]:
     em_key=profile.get("enrichment_model","gemini/gemini-2.5-flash-lite")
     cp_key=profile.get("copy_model","anthropic/claude-haiku-4-5")
     cost=0.0; result={}
@@ -1287,13 +2125,36 @@ def _enrich_one(row:dict,profile:dict)->Tuple[dict,float]:
     if _slug:
         log.debug("enrich: using ai_client=%r for AI key pools", _slug)
 
-    text,t_in,t_out=ai_call(em_key,profile["enrichment_system_prompt"],
-                             _build_enrich_input(row,profile),
+    serper_snippets, n_serper = _fetch_enrichment_serper_snippets(row, serper_key)
+    if n_serper:
+        cost += SERPER_COST_PER_QUERY * n_serper
+    sys_p = profile["enrichment_system_prompt"]
+    out_fields = profile.get("enrichment_output_fields") or []
+    if serper_snippets.strip():
+        sys_p += (
+            "\n\nWhen the user message includes LIVE SEARCH RESULTS: verify each hit refers to "
+            "the EXACT prospect company (match domain from website/email, not similar names). "
+            "Ignore snippets about unrelated companies or industries. Then identify real "
+            "competitors in the same market; apply all competitor validity rules."
+        )
+        if (
+            profile.get("enrichment_serper_disambiguation", True)
+            and "competitor_name" in out_fields
+            and "SERPER / G2 NOISE" not in sys_p
+        ):
+            sys_p += ENRICH_SERPER_DISAMBIGUATION_APPEND
+    user_p = _build_enrich_input(row, profile, serper_snippets)
+    text,t_in,t_out=ai_call(em_key, sys_p, user_p,
                              max_tokens=profile.get("enrichment_max_tokens",400),
                              temperature=profile.get("enrichment_temperature",0.3),
                              client_slug=_slug)
-    enr=parse_json(text); cost+=ai_cost(em_key,t_in,t_out)
-    for f in profile.get("enrichment_output_fields",[]): result[f]=enr.get(f,"")
+    enr = parse_json(text)
+    cost += ai_cost(em_key, t_in, t_out)
+    _enrich_apply_competitor_guard(enr, profile)
+    _enrich_apply_competitor_industry_guard(row, enr, profile)
+    for f in profile.get("enrichment_output_fields", []):
+        v = enr.get(f)
+        result[f] = "" if v is None else v
 
     # Add any static custom vars from profile
     for k,v in (profile.get("custom_static_vars") or {}).items(): result[k]=v
@@ -1301,39 +2162,124 @@ def _enrich_one(row:dict,profile:dict)->Tuple[dict,float]:
     if profile.get("copy_enabled",False):
         first=str(row.get("first_name","there")).strip()
         company=str(row.get("company_name","")).strip()
-        cta=profile.get("copy_cta","worth 15 min this week?")
+        cta1, cta2 = _enrich_copy_cta_pair(profile, row_index)
+        bleed_extra = COPY_CTA_POOL_4DD if profile.get("copy_cta_pool") else None
         sender=profile.get("sender_name","")
-        user_p=(f"Prospect: {first} @ {company}\n"
+        if profile.get("copy_cta_pool"):
+            copy_user = (
+                f"Prospect: {first} @ {company}\n"
                 f"Enrichment: {json.dumps(enr,indent=2)}\n\n"
-                f"CTA (append after each email body, NOT inside body): {cta}")
-        cp_text,cp_in,cp_out=ai_call(cp_key,profile["copy_system_prompt"],user_p,
+                f"EMAIL 1 CTA — end email1_body with this exact text, verbatim (do not paraphrase):\n"
+                f"  {cta1}\n\n"
+                f"EMAIL 2 CTA — end email2_body with this exact text, verbatim:\n"
+                f"  {cta2}\n\n"
+                f"Do not put either CTA inside the middle of a sentence; append after the body lines."
+            )
+        else:
+            copy_user = (
+                f"Prospect: {first} @ {company}\n"
+                f"Enrichment: {json.dumps(enr,indent=2)}\n\n"
+                f"CTA (append after each email body, NOT inside body): {cta1}"
+            )
+        cp_text,cp_in,cp_out=ai_call(cp_key,profile["copy_system_prompt"],copy_user,
                                       max_tokens=profile.get("copy_max_tokens",600),
                                       temperature=profile.get("copy_temperature",1.0),
                                       client_slug=_slug)
         cost+=ai_cost(cp_key,cp_in,cp_out); cp=parse_json(cp_text)
         for f in profile.get("copy_output_fields",[]): result[f]=cp.get(f,cp.get(f.replace(".","_"),""))
         # Assemble Instantly line columns
-        for prefix in ["email1","email2"]:
+        for prefix, cta in (("email1", cta1), ("email2", cta2)):
             body=cp.get(f"{prefix}_body","") or cp.get(f"{prefix}.body","")
             subj=cp.get(f"{prefix}_subject","") or cp.get(f"{prefix}.subject","")
             if body:
                 sents=[s.strip() for s in re.split(r'(?<=[.!?])\s+',body.strip()) if s.strip()]
                 result[f"{prefix}.subject"]=subj
                 result[f"{prefix}.line1"]=f"{first} -" if first else ""
-                result[f"{prefix}.line2"]=sents[0] if sents else ""
-                result[f"{prefix}.line3"]=" ".join(sents[1:]) if len(sents)>1 else ""
+                l2=sents[0] if sents else ""
+                l3=" ".join(sents[1:]) if len(sents)>1 else ""
+                l2=_strip_leading_first_name(l2,first)
+                l3=_strip_leading_first_name(l3,first)
+                l2=_strip_trailing_cta_bleed(l2, cta, extra_suffixes=bleed_extra)
+                l3=_strip_trailing_cta_bleed(l3, cta, extra_suffixes=bleed_extra)
+                # Sentence-case last so stripping name/CTA does not leave a lowercase lead
+                result[f"{prefix}.line2"]=_sentence_case(l2)
+                result[f"{prefix}.line3"]=_sentence_case(l3)
                 result[f"{prefix}.cta"]=cta
                 if sender: result[f"{prefix}.senderName"]=sender
                 result.pop(f"{prefix}_body",None); result.pop(f"{prefix}_subject",None)
+    if profile.get("copy_enabled", False):
+        cost += _enrich_qa_apply(row, profile, result, cp_key, _slug)
     return result, cost
 
+
+def _enrich_result_complete(res: dict, profile: dict) -> bool:
+    """
+    A row is only checkpointed as "done" when output is usable end-to-end.
+    Prevents resume from skipping rows where Gemini succeeded but Haiku/copy failed or
+    returned empty bodies (no exception — previously still marked done).
+
+    Mirrors 4dd_email_generator_v9.py process_rows(): only mark done if emails have
+    subject + body lines (see ``has_content`` check in the standalone script).
+    """
+    if not res:
+        return False
+    if profile.get("copy_enabled"):
+        if not str(res.get("email1.subject") or "").strip():
+            return False
+        if not str(res.get("email1.line2") or "").strip():
+            return False
+        if not str(res.get("email2.line2") or "").strip():
+            return False
+        return True
+    out_fields = profile.get("enrichment_output_fields") or []
+    if not out_fields:
+        return True
+    return any(str(res.get(f) or "").strip() for f in out_fields)
+
+
+def _enrich_prune_incomplete_checkpoint(
+    profile: dict, done_set: set, saved_rows: dict, st: dict, fp: str
+) -> int:
+    """Drop done_indices whose saved row fails _enrich_result_complete; persist state."""
+    drop: List[int] = []
+    for i in list(done_set):
+        saved = saved_rows.get(str(i), {})
+        if not _enrich_result_complete(saved, profile):
+            drop.append(i)
+    if not drop:
+        return 0
+    for i in drop:
+        done_set.discard(i)
+        saved_rows.pop(str(i), None)
+    en = st.setdefault("enrich", {})
+    en["done_indices"] = list(done_set)
+    en["enriched_rows"] = saved_rows
+    state_save(fp, st)
+    return len(drop)
+
+
 def _enrich_batch(rows:List[dict],profile:dict,workers:int,
-                  done_set:set,saved_rows:dict,fp:str,st:dict,all_rows:List[dict]
+                  done_set:set,saved_rows:dict,fp:str,st:dict,all_rows:List[dict],
+                  serper_key:str="",
                   )->Tuple[List[dict],float]:
     results=[None]*len(rows); total_cost=0.0
-    def do(idx,row):
-        try:   return idx,*_enrich_one(row,profile),None
-        except Exception as e: return idx,{},0.0,str(e)
+    real_indices: List[int] = []
+    for i, r in enumerate(rows):
+        try:
+            real_indices.append(all_rows.index(r))
+        except ValueError:
+            real_indices.append(i)
+
+    def do(idx, row):
+        try:
+            return idx, *_enrich_one(
+                row,
+                profile,
+                serper_key=serper_key,
+                row_index=real_indices[idx],
+            ), None
+        except Exception as e:
+            return idx, {}, 0.0, str(e)
     with Progress(SpinnerColumn(),TextColumn("[cyan]{task.description}"),
                   MofNCompleteColumn(),BarColumn(),TimeElapsedColumn(),console=console) as prog:
         task=prog.add_task("Enriching…",total=len(rows))
@@ -1343,12 +2289,25 @@ def _enrich_batch(rows:List[dict],profile:dict,workers:int,
                 idx,res,cost,err=fut.result()
                 with _enrich_lock:
                     results[idx]=res; total_cost+=cost
-                    if err: console.print(f"\n[red]  Row {idx} error:[/] {err[:80]}")
                     try: real=all_rows.index(rows[idx])
-                    except: real=idx
-                    saved_rows[str(real)]=res; done_set.add(real)
-                    st["enrich"]={"done_indices":list(done_set),"enriched_rows":saved_rows,"total_cost":total_cost}
-                    state_save(fp,st)
+                    except Exception: real=idx
+                    if err:
+                        console.print(f"\n[red]  Row {real} error:[/] {err[:80]}")
+                    elif not _enrich_result_complete(res, profile):
+                        console.print(
+                            f"\n[yellow]  Row {real} not checkpointed:[/] "
+                            f"missing copy output (Haiku empty/failed) or empty enrichment — "
+                            f"will retry on next run. Use [bold]enrich --force[/] to wipe state."
+                        )
+                    else:
+                        saved_rows[str(real)] = res
+                        done_set.add(real)
+                    st["enrich"] = {
+                        "done_indices": list(done_set),
+                        "enriched_rows": saved_rows,
+                        "total_cost": total_cost,
+                    }
+                    state_save(fp, st)
                 prog.advance(task)
     return [r or {} for r in results], total_cost
 
@@ -1365,7 +2324,9 @@ def _show_enrich_sample(results:List[dict],profile:dict):
 
 def stage_enrich(input_path:Path,rows:List[dict],col_map:Dict[str,Optional[str]],
                  fp:str,st:dict,profile:Optional[dict]=None,
-                 force_reenrich:bool=False)->Tuple[List[dict],float,Path]:
+                 force_reenrich:bool=False,sample_only:bool=False,
+                 serper_key:Optional[str]=None,
+                 test_batch_rows:Optional[int]=None)->Tuple[List[dict],float,Path]:
     """
     AI enrichment stage. Returns (enriched_rows, total_cost, output_path).
     If profile is None, prompts user to pick one.
@@ -1379,20 +2340,32 @@ def stage_enrich(input_path:Path,rows:List[dict],col_map:Dict[str,Optional[str]]
         if not p_name: return rows, 0.0, input_path
         profile=all_p[p_name]
 
+    if serper_key is None:
+        sk_resolved = _enrich_serper_key(None, False)
+    else:
+        sk_resolved = (serper_key or "").strip()
+
     em_key=profile.get("enrichment_model","gemini/gemini-2.5-flash-lite")
     cp_key=profile.get("copy_model","")
     workers=profile.get("workers",6); n=len(rows)
-    TEST_N=min(5,n)
 
     em_est=ai_cost_est(em_key,n,avg_in=profile.get("enrichment_max_tokens",400)//2,
                                   avg_out=profile.get("enrichment_max_tokens",400)//3)
     cp_est=ai_cost_est(cp_key,n) if (profile.get("copy_enabled") and cp_key) else 0.0
-    total_est=em_est+cp_est
+    serp_est = (SERPER_COST_PER_QUERY * 2 * n) if sk_resolved else 0.0
+    total_est=em_est+cp_est+serp_est
+
+    serp_line = (
+        f"[bold]Live search:[/]   [green]Serper[/]  [dim](~${serp_est:.4f}, 2 queries/row)[/]"
+        if sk_resolved
+        else "[bold]Live search:[/]   [dim]off[/]  [dim](set SERPER_API_KEY or mailclaw config)[/]"
+    )
 
     console.print(Panel(
         f"[bold]Profile:[/]      {profile.get('display_name',profile['name'])}\n"
         f"[bold]Enrich model:[/] {em_key}  [dim](~${em_est:.4f})[/]\n"
         f"[bold]Copy model:[/]   {cp_key if profile.get('copy_enabled') else 'disabled'}  [dim](~${cp_est:.4f})[/]\n"
+        f"{serp_line}\n"
         f"[bold]Rows:[/]         {n:,}   [bold]Workers:[/] {workers}\n"
         f"[bold yellow]Estimated total:[/]  ~${total_est:.4f}  (~${total_est/max(n,1):.6f}/row)",
         title="[bold]Enrichment Plan[/]",border_style="yellow"))
@@ -1408,6 +2381,20 @@ def stage_enrich(input_path:Path,rows:List[dict],col_map:Dict[str,Optional[str]]
     done_set=set(st.get("enrich",{}).get("done_indices",[]))
     saved_rows=st.get("enrich",{}).get("enriched_rows",{})
     total_cost=st.get("enrich",{}).get("total_cost",0.0)
+
+    if not force_reenrich and done_set:
+        n_bad = _enrich_prune_incomplete_checkpoint(profile, done_set, saved_rows, st, fp)
+        if n_bad:
+            console.print(
+                f"[yellow]Re-queued {n_bad} row(s):[/] saved checkpoint had no usable "
+                f"{'email copy' if profile.get('copy_enabled') else 'enrichment'} — "
+                f"they were not marked done (same as a partial interrupt before Haiku)."
+            )
+
+    if force_reenrich:
+        done_set=set(); saved_rows={}; total_cost=0.0
+        st["enrich"]={"done_indices":[],"enriched_rows":{},"total_cost":0.0}
+        state_save(fp,st)
 
     if done_set and not force_reenrich:
         console.print(f"[yellow]{len(done_set)}/{n} rows already enriched from previous run.[/]")
@@ -1426,21 +2413,41 @@ def stage_enrich(input_path:Path,rows:List[dict],col_map:Dict[str,Optional[str]]
         console.print("[green]All rows already enriched — skipping.[/]")
         return _apply_saved_enrich(std_rows,saved_rows),total_cost,input_path
 
+    try:
+        want_test = int(test_batch_rows) if test_batch_rows is not None else 5
+    except (TypeError, ValueError):
+        want_test = 5
+    want_test = max(1, want_test)
+    TEST_N = min(want_test, len(todo))
+
     # Test batch first
     if not done_set:
-        do_test=questionary.confirm(
-            f"Run test batch of {TEST_N} rows first before committing to full run?",
-            default=True,style=Q_STYLE).ask()
+        interactive=sys.stdin.isatty()
+        do_test = True if sample_only else (
+            questionary.confirm(
+                f"Run test batch of {TEST_N} rows first before committing to full run?",
+                default=True,style=Q_STYLE
+            ).ask() if interactive else False
+        )
         if do_test:
             console.print(f"\n[cyan]→[/] Test enrichment: {TEST_N} rows…")
             test_res,test_cost=_enrich_batch(todo[:TEST_N],profile,workers,
-                                              done_set,saved_rows,fp,st,std_rows)
+                                              done_set,saved_rows,fp,st,std_rows,
+                                              serper_key=sk_resolved)
             total_cost+=test_cost
             _show_enrich_sample(test_res,profile)
             console.print(f"\n[bold]Test cost:[/] ${test_cost:.4f}  |  [bold]Projected full run:[/] ~${total_est:.4f}")
-            go=questionary.confirm(
+            if sample_only:
+                console.print("[yellow]Sample-only mode: stopping after test batch.[/]")
+                enriched=_apply_saved_enrich(std_rows,saved_rows)
+                out_p=input_path.parent/out_name_timestamp(
+                    input_path.stem, "ai_enriched_SAMPLE_review"
+                )
+                csv_write(enriched,out_p); return enriched,total_cost,out_p
+            go = questionary.confirm(
                 f"Output look good? Continue with remaining {max(0,len(todo)-TEST_N):,} rows?",
-                default=True,style=Q_STYLE).ask()
+                default=True,style=Q_STYLE
+            ).ask() if interactive else True
             if not go:
                 console.print("[yellow]Stopped after test. Re-run anytime to continue.[/]")
                 enriched=_apply_saved_enrich(std_rows,saved_rows)
@@ -1450,7 +2457,8 @@ def stage_enrich(input_path:Path,rows:List[dict],col_map:Dict[str,Optional[str]]
 
     if todo:
         console.print(f"\n[cyan]→[/] Enriching {len(todo):,} remaining rows with {workers} workers…")
-        _,run_cost=_enrich_batch(todo,profile,workers,done_set,saved_rows,fp,st,std_rows)
+        _,run_cost=_enrich_batch(todo,profile,workers,done_set,saved_rows,fp,st,std_rows,
+                                  serper_key=sk_resolved)
         total_cost+=run_cost
         st["enrich"]["completed_at"]=datetime.utcnow().isoformat()
         state_save(fp,st)
@@ -2475,15 +3483,53 @@ def cmd_enrich(_args):
     c=cfg_load()
     if not any(v for v in c.get("model_keys",{}).values()):
         console.print("[red]No AI model keys configured. Run [bold]mailclaw config[/].[/]"); return
-    csv_path=pick_csv()
+    csv_arg=getattr(_args,"csv",None)
+    csv_path=Path(csv_arg).expanduser() if csv_arg else pick_csv()
+    if csv_arg and not csv_path.exists():
+        console.print(f"[red]CSV not found:[/] {csv_path}"); return
     if not csv_path: return
     fp=csv_fp(csv_path); st=state_load(fp)
     rows,cols=csv_read(csv_path)
     console.print(f"[green]✓[/] {len(rows):,} rows — [yellow]{csv_path.name}[/]")
-    col_map=st.get("column_map") or do_column_mapping(cols,rows)
+    if getattr(_args, "heuristic_map", False):
+        col_map = heuristic_map(cols)
+        console.print("[dim]Column map: heuristic only (--heuristic-map).[/]")
+        show_mapping_preview(cols, col_map, rows)
+    else:
+        col_map=st.get("column_map") or do_column_mapping(cols,rows)
     st["column_map"]=col_map; state_save(fp,st)
-    force=questionary.confirm("Force re-enrich all rows? (No = resume from checkpoint)",default=False,style=Q_STYLE).ask()
-    enriched,cost,out_p=stage_enrich(csv_path,rows,col_map,fp,st,force_reenrich=bool(force))
+    profile=None
+    p_name=(getattr(_args,"profile",None) or "").strip()
+    if p_name:
+        profile=profile_load(p_name)
+        if not profile:
+            console.print(f"[red]Profile '{p_name}' not found. Run [bold]mailclaw profiles[/].[/]"); return
+    force_arg = bool(getattr(_args, "force", False) or getattr(_args, "reset", False))
+    force = (
+        force_arg
+        if force_arg
+        else questionary.confirm(
+            "Force re-enrich all rows? (No = resume from checkpoint)",
+            default=False,
+            style=Q_STYLE,
+        ).ask()
+    )
+    sample_only=bool(getattr(_args,"sample_only",False))
+    if getattr(_args, "no_serper", False):
+        serp_kw = ""
+    elif getattr(_args, "serper_key", None) is not None:
+        serp_kw = (_args.serper_key or "").strip()
+    else:
+        serp_kw = None
+    tb = getattr(_args, "batch_rows", None)
+    enriched,cost,out_p=stage_enrich(
+        csv_path,rows,col_map,fp,st,
+        profile=profile,
+        force_reenrich=bool(force),
+        sample_only=sample_only,
+        serper_key=serp_kw,
+        test_batch_rows=tb,
+    )
     console.print(f"\n[green]✓[/] Enrichment complete — ${cost:.4f} — [yellow]{out_p.name}[/]")
 
 def cmd_upload(_args):
@@ -2792,6 +3838,7 @@ def cmd_config(_args):
         action=questionary.select("Config:",choices=[
             "➕  Add Reoon key","🗑   Remove Reoon key",
             "🔑  Set AI model keys (Gemini / Anthropic / OpenAI)",
+            "🔎  Serper API key (live Google search for enrichment)",
             "🔧  Daily credit limit per Reoon key",
             "🔧  Re-verify threshold (days)",
             "🤖  Telegram bot token",
@@ -2817,6 +3864,16 @@ def cmd_config(_args):
                              ("openai","platform.openai.com")]:
                 v=questionary.text(f"[{prov}] key ({url}) — Enter to skip:",style=Q_STYLE).ask()
                 if v and v.strip(): c["model_keys"][prov]=v.strip(); cfg_save(c); console.print(f"[green]✓[/] {prov}")
+        elif "Serper" in action:
+            cur = (c.get("serper_api_key") or "")[:12]
+            v = questionary.text(
+                f"Serper.dev API key (serper.dev — ~$1/1k searches) [current: {cur+'…' if cur else 'empty'}]:",
+                style=Q_STYLE,
+            ).ask()
+            if v is not None:
+                c["serper_api_key"] = v.strip()
+                cfg_save(c)
+                console.print("[green]✓[/] Serper key saved (used for 2 Google queries per row before Gemini enrich).")
         elif "Daily credit" in action:
             v=questionary.text(f"Limit per key per day (current: {c.get('daily_limit',2000)}):",style=Q_STYLE).ask()
             if v and v.isdigit(): c["daily_limit"]=int(v); cfg_save(c)
@@ -2835,10 +3892,13 @@ def cmd_config(_args):
                 if v: t.add_row("AI Model",p,v[:16]+"…")
             t.add_row("Limit","daily_limit",str(c.get("daily_limit",2000)))
             t.add_row("Setting","reverify_days",str(c.get("reverify_days",7)))
+            sk = c.get("serper_api_key") or ""
+            t.add_row("Serper", "enrichment search", (sk[:16] + "…") if sk else "[dim]not set[/]")
             console.print(t)
             console.print("\n[bold]Environment variables also accepted:[/]")
             for line in ["  GEMINI_API_KEY / GOOGLE_API_KEY",
-                         "  ANTHROPIC_API_KEY","  OPENAI_API_KEY"]:
+                         "  ANTHROPIC_API_KEY","  OPENAI_API_KEY",
+                         "  SERPER_API_KEY (optional — live Google before enrich)"]:
                 console.print(f"[dim]{line}[/]")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -6619,7 +7679,20 @@ def main():
     s=p.add_subparsers(dest="cmd")
     s.add_parser("run",      help="Full interactive pipeline (default)")
     s.add_parser("verify",   help="Email verification only")
-    s.add_parser("enrich",   help="AI enrichment only")
+    enr=s.add_parser("enrich",   help="AI enrichment only")
+    enr.add_argument("--profile","-p", default=None, help="Enrichment profile name e.g. --profile will")
+    enr.add_argument("--csv", default=None, help="Path to CSV file (skips picker)")
+    enr.add_argument("--force", action="store_true", help="Force re-enrich all rows (wipe enrich checkpoint)")
+    enr.add_argument("--reset", action="store_true",
+                     help="Same as --force: delete saved enrichment progress for this CSV so nothing is skipped")
+    enr.add_argument("--sample-only", action="store_true", help="Run only test batch and stop")
+    enr.add_argument("--batch-rows", type=int, default=None, metavar="N",
+                     help="Test batch size (default 5). Use with --sample-only e.g. --batch-rows 25")
+    enr.add_argument("--heuristic-map", action="store_true",
+                     help="Skip interactive column mapping; use heuristic column match only")
+    enr.add_argument("--serper-key", default=None, metavar="KEY",
+                     help="Serper.dev API key for live Google search before enrichment (or set SERPER_API_KEY)")
+    enr.add_argument("--no-serper", action="store_true", help="Disable live search even if SERPER_API_KEY is set")
     s.add_parser("upload",   help="Upload to Instantly only")
     s.add_parser("map",      help="Column mapping only")
     s.add_parser("balance",  help="Check Reoon + AI credits")
